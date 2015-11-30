@@ -16,13 +16,134 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+
 DOCUMENTATION = """
+---
+module: ios_facts
+version_added: "2.0"
+author: "Peter Sprygada (@privateip)"
+short_description: Collects fact information from an ios node over SSH
+description:
+  - Collects predetermined fact information from an ios node.
+notes:
+  - Supports additional arguments via the ssh shared modules.  See
+    module_utils/ssh.py for details.
+options:
+  include_neighbors:
+    description:
+      - Collects the current set of CDP (or LLDP) neighbors from
+        the target device.  Setting this argument to True will
+        instruct it to collect the neighbors.  By default it will
+        attempt to collect CDP information
+    required: false
+    default: true
+    choices: BOOLEANS
+  commands:
+    description:
+      - Adds an additional list of commands to collect from the
+        target device.  The list of commands will be returned in
+        the response.
+      - Note: This should not be used for configuring the device.
+    required: false
+    default: []
+  use_lldp:
+    description:
+      - By default, the ios_facts module will collect neighbor
+        output using CDP.  This argument will instruct the module
+        to collect LLDP information instead.
+    required: false
+    default: false
+    choices: BOOLEANS
+  use_config_all:
+    description:
+      - By default, the facts module will issue the command 'show
+        running-config all' on the target host when include_config is
+        true.  Some older versions of IOS do not support the all keyword.
+        This parameter will change the behavior to drop the all keyword
+        from the command issued
+    required: false
+    default: false
+    choices: BOOLEANS
+  include_interfaces:
+    description:
+      - Instructs the module to either collect or not collect
+        interface details from the target host.  Collection of
+        interface details is on by default
+    required: false
+    default: true
+    choices: BOOLEANS
+  include_routing:
+    description:
+      - Informs the ios_facts module to collect the current IP
+        routing table from the target device.  This feature is
+        enabled by default.  To disable it, set the value to False
+    required: false
+    default: true
+    choices: BOOLEANS
+  include_vlans:
+    description:
+      - Informs the ios_facts module to collect the set of VLANs
+        from the current device configuration.  Tis feature is enabled
+        by default.
+    required: false
+    default: true
+    choices: BOOLEANS
+  include_config:
+    description:
+      - By default, the module does not collect the current nodes
+        running configuration.  Setting this argument to True will
+        instruct it to collect the running-config
+    required: false
+    default: true
+    choices: BOOLEANS
 """
 
 EXAMPLES = """
+# Note: These examples do not set ssh parameters, see module_utils/ssh.py
+
+# collect facts from device
+- ios_facts:
+    include_neighbors: yes
+    include_interfaces: yes
+    include_config: yes
 """
 
 RETURN = """
+version:
+  description: Returns the output from 'show version'
+  returned: success
+  type: dict
+  sample: "{...}"
+interfaces:
+  description: Returns the output from 'show interface brief'
+  returned: success
+  type: dict
+  sample: "{...}"
+config:
+  description: Returns the output from 'show running-config all'
+  returned: success
+  type: dict
+  sample: "{...}"
+routing:
+  description: Returns the output from 'show ip route'
+  returned: success
+  type: dict
+  sample: "{...}"
+neighbors:
+  description: Returns the output from 'show cdp neighbors' or 'show lldp neighbors'
+  returned: success
+  type: dict
+  sample: "{...}"
+vlans:
+  description: Returns the output from 'show vlans'
+  returned: success
+  type: dict
+  sample: "{...}"
+commands:
+  description: Returns the output from a list of commands provided as arguments
+  returned: when configured
+  type: dict
+  sample: "[{...}, {...}]"
 """
 
 IOS_FACTS = ['vlans', 'routing', 'interfaces', 'neighbors', 'config']
