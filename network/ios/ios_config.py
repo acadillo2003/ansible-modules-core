@@ -15,14 +15,140 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
-
 DOCUMENTATION = """
+---
+module: ios_config
+version_added: "2.0"
+author: "Peter Sprygada (@privateip)"
+short_description: Send and receive ios configuration commands over ssh
+description:
+  - Sends and receives ios configuration commands using ssh over a
+    SSH transport.  This module supports sending either a single
+    command or an ordered set of the remote host.
+notes:
+  - Supports additional arguments via the ssh shared modules.  See
+    module_utils/ssh.py for details.
+options:
+  line:
+    description:
+      - The configuration line in the device configuration that should be
+        present  The current node configuration is evaluated and if
+        the line is not found it will be added
+    required: false
+    default: null
+  block:
+    description:
+      - The block of configuration to apply to the node.  Use block
+        to configure more than one line statement.  For each line
+        in the block, the configuration is evaluated and missing lines
+        are added to the configuration based on the C(strategy).  The
+        C(block) and C(line) arguments are mutually exclusive.
+    type: list
+    required: false
+    default: null
+  parent:
+    description:
+      - The configuration parent for the C(line) or C(block).  The
+        C(parent) argument is a one line configuration statement
+        for entering sub mode configuration commands.  It is mutually
+        exclusive with C(ancestors).  See EXAMPLES for details.
+    required: false
+    default: null
+  ancestors:
+    description:
+      - The ancestors of the block or line of configuration.  The
+        C(ancestors) argument allows for nested configuration options and
+        is mutually exclusive with C(parent).  See EXAMPLES for details.
+    type: list
+    required: false
+    default: null
+  before_block:
+    description:
+      - A set of configuration commands to execute before the block.  The
+        C(before_block) is execute if and only if the commands in either
+        C(line) or C(block) trigger a configuration change.
+    required: false
+    default: null
+  after_block:
+    description:
+      - a set of configuration commands to execute after the block.  This
+        argument is the same as C(before_block) only it is configured
+        once the C(block) statements are completed
+    required: false
+    default: null
+  strategy:
+    description:
+      - Specifies the strategy to use to install a block of configuration
+        on the node.  By default the config block is evaluated against
+        the current nodes configuration.  Any line that doesn't match
+        is added to the config.  If the value is set to C(all) will cause
+        the entire block to be applied if any line is not in the current
+        config.  Finally setting the value to C(force) will not evalue
+        the current config and simply configure the node with the block.
+    required: false
+    default: changed
+    choices: ['changed', 'all', 'force']
+  config:
+    description:
+      - Overrides the device configuration file with this value.  By
+        default, this module will attach to the node to collect the current
+        running-config.  Using this argument will override that behavior
+        and validate the configuration passed
+    required: false
+    default: null
+  config_file:
+    description:
+      - The path to the device configuration for offline access to the
+        configuration file.  This option is the same as the C(config)
+        option only it will read the config contents from a file.  The
+        C(config) and C(config_file) arguments are mutually exclusive
+    required: false
+    default: null
 """
 
 EXAMPLES = """
+# Note: These examples do not set ssh parameters, see module_utils/ssh.py
+
+# make a simple configuration change
+- ios_config:
+    line: "hostname switch"
+# configure an interface block
+- ios_config:
+    block:
+      - "description example config block"
+      - "ip address 1.1.1.1/32"
+      - "no shutdown"
+    parent: "interface loopback0"
+
+# configure an access list.  this example will evalue the current
+# configuration and if any statement doesn't match in the acl
+# it will remove the acl (the before_block)  and reconfigured
+# it with statements in block
+- ios_config:
+    block:
+      - "10 permit ip 172.30.10.0/24 any"
+      - "20 permit ip 172.30.11.0/24 any"
+      - "30 permit ip 172.30.12.0/24 any"
+      - "40 permit ip 172.30.13.0/24 any"
+    parent: "ip access-list example"
+    before_block:
+      - "no ip access-list example"
+    strategy: all
+
+# use ancestors to configure nested commands
+- ios_config:
+    block:
+      - "remote-as 65000"
+      - "update source loopback0"
+    ancestors: ["router bgp 65000", "neighbor 1.1.1.1"]
 """
 
 RETURN = """
+commands:
+  description: The list of commands used to configure the device
+  returned: success
+  type: list
+  sample: "[{ ... }]"
 """
 
 import re
