@@ -124,6 +124,15 @@ options:
         not added
     required: false
     default: true
+  offline_mode:
+    description:
+      - This flag controls if the module runs in online or offline mode.  When
+        in online mode, the module will connect to the device to get the
+        config and push config changes.  When in offline mode, the module
+        expects the config or config_file argument to provided and it
+        generates a list of commands in the result
+    required: false
+    default: false
 """
 
 EXAMPLES = """
@@ -180,6 +189,7 @@ config:
 
 
 import re
+import collections
 
 
 def parse(config, indent=3):
@@ -188,7 +198,7 @@ def parse(config, indent=3):
     invalid_re = re.compile(r'^(!|end)')
 
     ancestors = list()
-    data = dict()
+    data = collections.OrderedDict()
     banner = False
 
     for line in config:
@@ -211,7 +221,7 @@ def parse(config, indent=3):
 
             # handle top level commands
             elif line_re.match(line):
-                data[text] = dict()
+                data[text] = collections.OrderedDict()
                 ancestors = [text]
 
             # handle sub level commands
@@ -230,7 +240,7 @@ def parse(config, indent=3):
                         child = data[ancestors[0]]
                         for a in ancestors[1:level]:
                             child = child[a]
-                        child[text] = dict()
+                        child[text] = collections.OrderedDict()
                     except KeyError:
                         # FIXME deal with indent inconsistencies
                         if '_errors' not in data:
@@ -302,7 +312,8 @@ def main():
         config=dict(),
         config_file=dict(),
         enable_mode=dict(default=True, choices=[True]),
-        include_all=dict(default=True, type='bool')
+        include_all=dict(default=True, type='bool'),
+        offline_mode=dict(default=False, type='bool')
     )
     argument_spec = eapi_argument_spec(spec)
     required_one_of = eapi_required_one_of([('line', 'block')])
@@ -314,8 +325,11 @@ def main():
                            required_one_of=required_one_of,
                            supports_check_mode=True)
 
-    if module.params['host'] == 'localhost':
-        module.check_mode = True
+    offline_mode = module.params['offline_mode']
+    if offline_mode:
+        if not module.params['config'] and not module.params['config_file']:
+            module.fail_json(msg='config or config_file must be specified '
+                                 'when offline_mode is enabled')
 
     before_block = module.params['before_block']
     after_block = module.params['after_block']
@@ -342,7 +356,7 @@ def main():
             contents = get_config(module)
         config = parse_config(contents, ancestors)
 
-    result = dict(changed=False, config=config.keys())
+    result = dict(changed=False, config=config.keys(), warnings=list())
     commands = list()
 
     if replace:
@@ -356,6 +370,9 @@ def main():
             commands = list(block)
         elif module.params['match'] == 'exact':
             if commands or config.keys() != block:
+                result['exact_block'] = block
+                result['exact_commands'] = commands
+                result['exact_config'] = config.keys()
                 commands = list(block)
 
     if commands:
@@ -368,13 +385,14 @@ def main():
         if after_block:
             commands.extend(after_block)
 
-        if not module.check_mode:
+        if not module.check_mode and not offline_mode:
             response, headers = eapi_configure(module, commands)
-            output = response[0]
-            for resp in output:
-                if int(resp['code']) != 200:
-                    module.fail_json(**resp)
-
+            for resp in response:
+                if 'warnings' in resp:
+                    result['warnings'].append(resp['warnings'])
+                elif resp != {}:
+                    module.fail_json(msg='one or more commands failed',
+                                     error=resp)
         result['changed'] = True
 
     result['commands'] = commands
