@@ -104,6 +104,15 @@ options:
         C(config) and C(config_file) arguments are mutually exclusive
     required: false
     default: null
+  offline_mode:
+    description:
+      - This flag controls if the module runs in online or offline mode.  When
+        in online mode, the module will connect to the device to get the
+        config and push config changes.  When in offline mode, the module
+        expects the config or config_file argument to provided and it
+        generates a list of commands in the result
+    required: false
+    default: false
 """
 
 EXAMPLES = """
@@ -149,10 +158,17 @@ commands:
   returned: success
   type: list
   sample: "[{ ... }]"
+
+config:
+  description: The block extracted from the running-config
+  returned: success
+  type: list
+  sample: "[...]"
 """
 
 import re
 import collections
+
 
 def parse(config, indent=1):
     regexp = re.compile(r'^\s*(.+)$')
@@ -160,8 +176,7 @@ def parse(config, indent=1):
     invalid_re = re.compile(r'^(!|end)')
 
     ancestors = list()
-    data = dict()
-    #data = collections.OrderedDict()
+    data = collections.OrderedDict()
     banner = False
 
     for line in config:
@@ -171,7 +186,7 @@ def parse(config, indent=1):
 
             # handle top level commands
             if line_re.match(line):
-                data[text] = dict()
+                data[text] = collections.OrderedDict()
                 ancestors = [text]
 
             # handle sub level commands
@@ -190,7 +205,7 @@ def parse(config, indent=1):
                         child = data[ancestors[0]]
                         for a in ancestors[1:level]:
                             child = child[a]
-                        child[text] = dict()
+                        child[text] = collections.OrderedDict()
                     except KeyError:
                         # FIXME deal with indent inconsistencies
                         if '_errors' not in data:
@@ -236,31 +251,47 @@ def parse_config(config, ancestors=None):
 
     return config
 
+def to_re(expression):
+    expression = '^{}$'.format(expression)
+    return re.compile(expression)
+
+def match_re(regexp, values):
+    for value in values:
+        if regexp.match(value):
+            return True
 
 def main():
 
     spec = dict(
         line=dict(),
+        replace=dict(),
         block=dict(type='list'),
         parent=dict(),
         ancestors=dict(type='list'),
         before_block=dict(type='list'),
         after_block=dict(type='list'),
-        strategy=dict(default='changed', choices=['changed', 'all', 'force', 'exact']),
+        match=dict(default='line', choices=['line', 'block', 'exact', 'force']),
         config=dict(),
         config_file=dict(),
         enable_mode=dict(default=True, choices=[True]),
-        enable_password=dict(),
-        include_all=dict(default=True, type='bool')
+        include_all=dict(default=True, type='bool'),
+        offline_mode=dict(default=False, type='bool')
     )
     argument_spec = ios_argument_spec(spec)
-    mutually_exclusive = [('parent', 'ancestors'), ('config', 'config_file')]
     required_one_of = ios_required_one_of([('line', 'block')])
+    mutually_exclusive = [('parent', 'ancestors'), ('config', 'config_file'),
+                          ('block', 'replace'), ('line', 'block')]
 
     module = AnsibleModule(argument_spec=argument_spec,
                            mutually_exclusive=mutually_exclusive,
                            required_one_of=required_one_of,
                            supports_check_mode=True)
+
+    offline_mode = module.params['offline_mode']
+    if offline_mode:
+        if not module.params['config'] and not module.params['config_file']:
+            module.fail_json(msg='config or config_file must be specified '
+                                 'when offline_mode is enabled')
 
     connection = None
 
@@ -271,6 +302,8 @@ def main():
     block = module.params['block']
     if not block:
         block = [line]
+
+    replace = module.params['replace']
 
     parent = module.params['parent']
     ancestors = module.params['ancestors']
@@ -284,20 +317,26 @@ def main():
         if module.params['config_file']:
             contents = load_config(module)
         else:
-            connection = ios_connection(module)
+            if not offline_mode:
+                connection = ios_connection(module)
             contents = get_config(connection, module)
         config = parse_config(contents, ancestors)
 
     result = dict(changed=False)
+    commands = list()
 
-    if module.params['strategy'] == 'exact':
-        cmds = list(set(block).intersection(config))
-        commands = list(set(block).difference(cmds))
+    if replace:
+        if not match_re(to_re(line), config.keys()):
+            commands.append(replace)
     else:
-        commands = list(set(block).difference(config))
-
-    if commands and module.params['strategy'] == 'all':
-        commands = block
+        for cmd in block:
+            if cmd not in config:
+                commands.append(cmd)
+        if module.params['match'] == 'block' and commands:
+            commands = list(block)
+        elif module.params['match'] == 'exact':
+            if commands or config.keys() != block:
+                commands = list(block)
 
     if commands:
         if ancestors:
@@ -309,7 +348,7 @@ def main():
         if after_block:
             commands.extend(after_block)
 
-        if not module.check_mode:
+        if not module.check_mode and not offline_mode:
             if not connection:
                 connection = ios_connection(module)
 
