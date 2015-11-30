@@ -273,8 +273,7 @@ def load_config(module):
         filename = module.params['config_file']
         return open(filename).read()
     except IOError, exc:
-        return module.fail_json(msg=exc.strerror, errno=exc.errno,
-                                cwd=os.getcwd())
+        return module.fail_json(msg=exc.strerror, errno=exc.errno)
 
 def parse_config(config, ancestors=None):
     config = parse(str(config).split('\n'))
