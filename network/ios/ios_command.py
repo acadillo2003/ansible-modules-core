@@ -17,14 +17,65 @@
 #
 
 DOCUMENTATION = """
+---
+module: ios_command
+version_added: "2.0"
+author: "Peter Sprygada (@privateip)"
+short_description: Send and receive ios commands over ssh to Cisco devices
+description:
+  - Sends and receives ios commands using ssh over a SSH transport.  This
+    module supports sending either a single command or an ordered set of
+    the remote host.
+notes:
+  - Supports additional arguments via the ssh shared modules.  See
+    module_utils/ssh.py for details.
+options:
+  command:
+    description:
+      - Sends a single command over ssh and returns the results.  The
+        command is any valid ios command that the user is allowed to
+        execute.  This argument is mutually exclusive with the
+        C(commands) argument
+    required: false
+    default: null
+  commands:
+    description:
+      - Sends a block of commands to the remote host over ssh.  The
+        commands are listed in order.  This argument is mutually
+        exclusive with C(command)
+    type: list
+    required: false
+    default: null
 """
 
 EXAMPLES = """
+# Note: These examples do not set ssh parameters, see module_utils/ssh.py
+
+# send a single command and return its result
+- ios_command:
+    command: "show version"
+
+# send multiple commands and return the results
+- ios_command:
+    commands:
+      - "show version"
+      - "show ip route"
 """
 
 RETURN = """
-"""
+stdout:
+  description: The responses generated from the device based on the command
+  returned: always
+  type: list
+  sample: [...]
 
+stdout_lines:
+  description: The responses generated from the device based on the command
+    split into a list at the line end
+  returned: always
+  type: list
+  sample: [[...], [...]]
+"""
 
 def main():
 
