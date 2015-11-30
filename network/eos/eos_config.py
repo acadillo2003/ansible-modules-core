@@ -186,8 +186,6 @@ config:
   type: list
   sample: "[...]"
 """
-
-
 import re
 import collections
 
@@ -266,7 +264,7 @@ def get_config(module):
             cmd += ' all'
         response, headers = eapi_command(module, cmd, 'text')
         config = response[0]['output']
-    return config or list()
+    return config or dict()
 
 def load_config(module):
     try:
@@ -277,14 +275,15 @@ def load_config(module):
 
 def parse_config(config, ancestors=None):
     config = parse(str(config).split('\n'))
+
     if not ancestors:
-        return [key for key, value in config.iteritems() if not value]
+        return collections.OrderedDict([(k, v) for k, v in config.iteritems() if not v])
 
     try:
         for ancestor in ancestors:
             config = config[ancestor]
     except KeyError:
-        return list()
+        return dict()
 
     return config
 
@@ -315,7 +314,7 @@ def main():
         offline_mode=dict(default=False, type='bool')
     )
     argument_spec = eapi_argument_spec(spec)
-    required_one_of = eapi_required_one_of([('line', 'block')])
+    required_one_of = [('line', 'block')]
     mutually_exclusive = [('parent', 'ancestors'), ('config', 'config_file'),
                           ('block', 'replace'), ('line', 'block')]
 
@@ -329,6 +328,10 @@ def main():
         if not module.params['config'] and not module.params['config_file']:
             module.fail_json(msg='config or config_file must be specified '
                                  'when offline_mode is enabled')
+    else:
+        if not module.params['host'] and not module.params['device']:
+            module.fail_json(msg='host or device argument must be specified '
+                                 'when using module in online mode')
 
     before_block = module.params['before_block']
     after_block = module.params['after_block']
@@ -369,9 +372,6 @@ def main():
             commands = list(block)
         elif module.params['match'] == 'exact':
             if commands or config.keys() != block:
-                result['exact_block'] = block
-                result['exact_commands'] = commands
-                result['exact_config'] = config.keys()
                 commands = list(block)
 
     if commands:
