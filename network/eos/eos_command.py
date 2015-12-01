@@ -89,15 +89,12 @@ def main():
         commands=dict(type='list'),
         encoding=dict(default='json', choices=['json', 'text'])
     )
-    argument_spec = eapi_argument_spec(spec)
-
     mutually_exclusive = [('command','commands')]
+    required_one_of = [('command', 'commands')]
 
-    required_one_of = eapi_required_one_of([('command', 'commands')])
-
-    module = AnsibleModule(argument_spec=argument_spec,
-                           mutually_exclusive=mutually_exclusive,
-                           required_one_of=required_one_of)
+    module = eapi_module(argument_spec=spec,
+                         mutually_exclusive=mutually_exclusive,
+                         required_one_of=required_one_of)
 
     commands = module.params['commands'] or module.params['command']
     encoding = module.params['encoding']
