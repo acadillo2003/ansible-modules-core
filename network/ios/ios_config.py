@@ -229,7 +229,7 @@ def get_config(conn, module):
         if module.params['include_all']:
             cmd += ' all'
         config = conn.send('show running-config all')[0]
-    return config or list()
+    return config or dict()
 
 def load_config(module):
     try:
@@ -240,14 +240,15 @@ def load_config(module):
 
 def parse_config(config, ancestors=None):
     config = parse(str(config).split('\n'))
+
     if not ancestors:
-        return [key for key, value in config.iteritems() if not value]
+        return collections.OrderedDict([(k, v) for k, v in config.iteritems() if not v])
 
     try:
         for ancestor in ancestors:
             config = config[ancestor]
     except KeyError:
-        return list()
+        return dict()
 
     return config
 
@@ -278,7 +279,7 @@ def main():
         offline_mode=dict(default=False, type='bool')
     )
     argument_spec = ios_argument_spec(spec)
-    required_one_of = ios_required_one_of([('line', 'block')])
+    required_one_of = [('line', 'block')]
     mutually_exclusive = [('parent', 'ancestors'), ('config', 'config_file'),
                           ('block', 'replace'), ('line', 'block')]
 
@@ -292,6 +293,10 @@ def main():
         if not module.params['config'] and not module.params['config_file']:
             module.fail_json(msg='config or config_file must be specified '
                                  'when offline_mode is enabled')
+    else:
+        if not module.params['host'] and not module.params['device']:
+            module.fail_json(msg='host or device argument must be specified '
+                                 'when using module in online mode')
 
     connection = None
 
@@ -311,8 +316,8 @@ def main():
         ancestors = [parent]
 
     candidate = (ancestors, block)
-    if module.params['strategy'] == 'force':
-        config = list()
+    if module.params['match'] == 'force':
+        config = dict()
     else:
         if module.params['config_file']:
             contents = load_config(module)
