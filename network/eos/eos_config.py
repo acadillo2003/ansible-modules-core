@@ -313,15 +313,15 @@ def main():
         include_all=dict(default=True, type='bool'),
         offline_mode=dict(default=False, type='bool')
     )
-    argument_spec = eapi_argument_spec(spec)
+
     required_one_of = [('line', 'block')]
     mutually_exclusive = [('parent', 'ancestors'), ('config', 'config_file'),
                           ('block', 'replace'), ('line', 'block')]
 
-    module = AnsibleModule(argument_spec=argument_spec,
-                           mutually_exclusive=mutually_exclusive,
-                           required_one_of=required_one_of,
-                           supports_check_mode=True)
+    module = eapi_module(argument_spec=spec,
+                         mutually_exclusive=mutually_exclusive,
+                         required_one_of=required_one_of,
+                         supports_check_mode=True)
 
     offline_mode = module.params['offline_mode']
     if offline_mode:
