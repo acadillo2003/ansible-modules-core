@@ -72,6 +72,7 @@ options:
 
 EXAMPLES = """
 # Note: These examples do not set eapi parameters, see module_utils/eapi.py
+
 # collect facts from device
 - eos_facts:
     include_neighbors: yes
@@ -133,11 +134,10 @@ def main():
         include_config=dict(default=False, type='bool'),
         include_neighbors=dict(default=True, type='bool'),
         commands=dict(type='list'),
-        use_lldp=dict(default=False, type='bool')
+        use_config_all=dict(default=True, type='bool')
     )
-    argument_spec = eapi_argument_spec(spec)
 
-    module = AnsibleModule(argument_spec=argument_spec)
+    module = eapi_module(argument_spec=spec)
 
     commands = dict(version='show version')
     for fact in EAPI_FACTS:
@@ -156,8 +156,15 @@ def main():
         eos_facts[key[0]] = output['output']
 
     if module.params['include_config']:
-        response = eapi_command(module, 'show running-config', 'text')
-        eos_facts['config'] = response['output']
+        if not module.params['enable_mode']:
+            msg = 'enable_mode must be set to true to collect the running-config'
+            module.fail_json(msg=msg)
+
+        cmd = 'show running-config'
+        if module.params['use_config_all']:
+            cmd += ' all'
+        response, headers = eapi_command(module, cmd, 'text')
+        eos_facts['config'] = response[0]['output']
 
     if module.params['commands']:
         response = eapi_command(module, module.params['commands'], 'text')
