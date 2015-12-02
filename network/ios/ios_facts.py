@@ -187,8 +187,8 @@ def main():
         use_config_all=dict(default=True, type='bool')
     )
 
-    module = AnsibleModule(argument_spec=spec,
-                           supports_check_mode=False)
+    module = ios_module(argument_spec=spec,
+                        supports_check_mode=False)
 
     commands = dict(version='show version')
     for fact in IOS_FACTS:
