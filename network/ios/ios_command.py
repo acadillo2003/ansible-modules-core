@@ -83,11 +83,9 @@ def main():
         command=dict(),
         commands=dict(type='list')
     )
-    argument_spec = ios_argument_spec(spec)
-
     mutually_exclusive = [('command','commands')]
 
-    module = AnsibleModule(argument_spec=argument_spec,
+    module = ios_module(argument_spec=spec,
                            mutually_exclusive=mutually_exclusive)
 
     command = module.params['command']
