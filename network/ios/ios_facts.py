@@ -186,13 +186,8 @@ def main():
         use_lldp=dict(default=False, type='bool'),
         use_config_all=dict(default=True, type='bool')
     )
-    argument_spec = ios_argument_spec(spec)
 
-    argument_spec = ios_argument_spec(spec)
-    required_one_of = ios_required_one_of()
-
-    module = AnsibleModule(argument_spec=argument_spec,
-                           required_one_of=required_one_of,
+    module = AnsibleModule(argument_spec=spec,
                            supports_check_mode=False)
 
     commands = dict(version='show version')
