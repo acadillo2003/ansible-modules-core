@@ -137,7 +137,7 @@ def main():
         use_config_all=dict(default=True, type='bool')
     )
 
-    module = eapi_module(argument_spec=spec)
+    module = eapi_module(argument_spec=spec, supports_check_mode=True)
 
     commands = dict(version='show version')
     for fact in EAPI_FACTS:
