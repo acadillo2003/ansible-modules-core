@@ -256,16 +256,13 @@ def load_config(module):
 
 def parse_config(config, ancestors=None):
     config = parse(str(config).split('\n'))
-
-    if not ancestors:
-            return collections.OrderedDict([(k, v) for k, v in config.iteritems() if not v])
-
     try:
         for ancestor in ancestors:
             config = config[ancestor]
     except KeyError:
         return dict()
-
+    except TypeError:
+        pass
     return config
 
 def to_re(expression):
@@ -339,7 +336,7 @@ def main():
             contents = get_config(module)
         config = parse_config(contents, ancestors)
 
-    result = dict(changed=False, config=config.keys(), warnings=list())
+    result = dict(changed=False, warnings=list())
     commands = list()
 
     if replace:
@@ -353,9 +350,6 @@ def main():
             commands = list(block)
         elif module.params['match'] == 'exact':
             if commands or config.keys() != block:
-                result['exact_block'] = block
-                result['exact_commands'] = commands
-                result['exact_config'] = config.keys()
                 commands = list(block)
 
     if commands:
