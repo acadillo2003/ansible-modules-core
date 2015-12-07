@@ -358,7 +358,7 @@ def main():
             contents = get_config(module)
         config = parse_config(contents, ancestors)
 
-    result = dict(changed=False, config=config.keys(), warnings=list())
+    result = dict(changed=False, warnings=list())
     commands = list()
 
     if replace:
