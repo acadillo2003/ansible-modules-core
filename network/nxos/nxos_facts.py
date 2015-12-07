@@ -157,7 +157,7 @@ def main():
         use_lldp=dict(default=False, type='bool')
     )
 
-    module = nxapi_module(argument_spec=spec)
+    module = nxapi_module(argument_spec=spec, supports_check_mode=True)
 
     commands = dict(version='show version')
     for fact in NXAPI_FACTS:
