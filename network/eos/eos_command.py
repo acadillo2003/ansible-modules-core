@@ -94,7 +94,8 @@ def main():
 
     module = eapi_module(argument_spec=spec,
                          mutually_exclusive=mutually_exclusive,
-                         required_one_of=required_one_of)
+                         required_one_of=required_one_of,
+                         supports_check_mode=True)
 
     commands = module.params['commands'] or module.params['command']
     encoding = module.params['encoding']
