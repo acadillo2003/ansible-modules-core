@@ -36,6 +36,15 @@ options:
         the line is not found it will be added
     required: false
     default: null
+  replace:
+    description:
+      - This argument will be used to configure the device if the value of
+        C(line) is matched.  This allows for matching a configuration
+        entry based on the line and supplying the replace string as the
+        configuration object.
+      - See Examples
+    required: false
+    default: null
   block:
     description:
       - The block of configuration to apply to the node.  Use block
@@ -43,6 +52,15 @@ options:
         in the block, the configuration is evaluated and missing lines
         are added to the configuration based on the C(strategy).  The
         C(block) and C(line) arguments are mutually exclusive.
+    type: list
+    required: false
+    default: null
+  block_replace:
+    description:
+      - Works same as the replace option only applies to blocks.  This
+        option must map 1 for 1 to the block provided in order to work
+        properly.
+      - See Examples
     type: list
     required: false
     default: null
@@ -76,7 +94,7 @@ options:
         once the C(block) statements are completed
     required: false
     default: null
-  strategy:
+  match:
     description:
       - Specifies the strategy to use to install a block of configuration
         on the node.  By default the config block is evaluated against
@@ -87,7 +105,7 @@ options:
         the current config and simply configure the node with the block.
     required: false
     default: changed
-    choices: ['changed', 'all', 'force']
+    choices: ['line', 'block', 'exact', 'force']
   config:
     description:
       - Overrides the device configuration file with this value.  By
@@ -104,7 +122,7 @@ options:
         C(config) and C(config_file) arguments are mutually exclusive
     required: false
     default: null
-  offline_mode:
+  offline:
     description:
       - This flag controls if the module runs in online or offline mode.  When
         in online mode, the module will connect to the device to get the
@@ -150,6 +168,21 @@ EXAMPLES = """
       - "remote-as 65000"
       - "update source loopback0"
     ancestors: ["router bgp 65000", "neighbor 1.1.1.1"]
+
+# search the configuration for the line and if matched use the replace
+# string to configure the device
+- ios_config:
+    line: "router bgp 65000"
+    replace "no router bgp 65000"
+
+# search and replace also works with blocks
+- ios_config:
+    block:
+      - permit 10 ip any
+      - deny 20 ip any
+    block_replace:
+      - permit 10 ip any log
+      - deny 20 ip any log
 """
 
 RETURN = """
@@ -214,13 +247,6 @@ def parse(config, indent=1):
 
     return data
 
-def to_list(arg):
-    if isinstance(arg, (list, tuple)):
-        return list(arg)
-    elif arg is not None:
-        return [arg]
-    else:
-        return
 
 def get_config(conn, module):
     config = module.params['config']
@@ -240,26 +266,39 @@ def load_config(module):
 
 def parse_config(config, ancestors=None):
     config = parse(str(config).split('\n'))
-
-    if not ancestors:
-        return collections.OrderedDict([(k, v) for k, v in config.iteritems() if not v])
-
     try:
         for ancestor in ancestors:
             config = config[ancestor]
     except KeyError:
         return dict()
-
+    except TypeError:
+        pass
     return config
 
-def to_re(expression):
-    expression = '^{}$'.format(expression)
-    return re.compile(expression)
-
-def match_re(regexp, values):
+def match_re(pattern, values):
+    regexp = re.compile(r'%s' % pattern)
     for value in values:
-        if regexp.match(value):
-            return True
+        match = regexp.search(value)
+        if match:
+            return match
+
+def apply_positional(value, match):
+    if match is None:
+        return value
+    # TODO: trap IndexError
+    for v in re.findall(r"\\\d+", value):
+        index = int(v.replace('\\', ''))
+        val = match.group(index)
+        value = value.replace(v, val)
+    return value
+
+
+def apply_named(values, matches):
+    for value in values:
+        for match in matches:
+            if match:
+                value = value.format(**match.groupdict())
+        yield value
 
 def main():
 
@@ -267,16 +306,18 @@ def main():
         line=dict(),
         replace=dict(),
         block=dict(type='list'),
+        block_replace=dict(type='list'),
         parent=dict(),
         ancestors=dict(type='list'),
         before_block=dict(type='list'),
         after_block=dict(type='list'),
-        match=dict(default='line', choices=['line', 'block', 'exact', 'force']),
+        match=dict(default='line', choices=['line', 'block', 'force']),
         config=dict(),
         config_file=dict(),
         enable_mode=dict(default=True, choices=[True]),
         include_all=dict(default=True, type='bool'),
-        offline_mode=dict(default=False, type='bool')
+        offline=dict(default=False, type='bool'),
+        state=dict(default='present', choices=['present', 'absent'])
     )
     required_one_of = [('line', 'block')]
     mutually_exclusive = [('parent', 'ancestors'), ('config', 'config_file'),
@@ -287,11 +328,11 @@ def main():
                         required_one_of=required_one_of,
                         supports_check_mode=True)
 
-    offline_mode = module.params['offline_mode']
-    if offline_mode:
+    offline = module.params['offline']
+    if offline:
         if not module.params['config'] and not module.params['config_file']:
             module.fail_json(msg='config or config_file must be specified '
-                                 'when offline_mode is enabled')
+                                 'when offline is enabled')
     else:
         if not module.params['host'] and not module.params['device']:
             module.fail_json(msg='host or device argument must be specified '
@@ -303,56 +344,65 @@ def main():
     after_block = module.params['after_block']
 
     line = module.params['line']
-    block = module.params['block']
-    if not block:
-        block = [line]
+    block = module.params['block'] or [line]
 
     replace = module.params['replace']
+    block_replace = module.params['block_replace']
+    if not block_replace and replace:
+        block_replace = [replace]
+    elif not block_replace:
+        block_replace = list(block)
 
     parent = module.params['parent']
     ancestors = module.params['ancestors']
     if not ancestors and parent:
         ancestors = [parent]
 
-    candidate = (ancestors, block)
-    if module.params['match'] == 'force':
-        config = dict()
+    if module.params['config_file']:
+        contents = load_config(module)
     else:
-        if module.params['config_file']:
-            contents = load_config(module)
-        else:
-            if not offline_mode:
-                connection = ios_connection(module)
-            contents = get_config(connection, module)
-        config = parse_config(contents, ancestors)
+        if not offline:
+            connection = ios_connection(module)
+        contents = get_config(connection, module)
+    config = parse_config(contents, ancestors)
+    config = config.keys()
 
     result = dict(changed=False)
     commands = list()
+    matches = list()
 
-    if replace:
-        if not match_re(to_re(line), config.keys()):
-            commands.append(replace)
-    else:
-        for cmd in block:
-            if cmd not in config:
-                commands.append(cmd)
-        if module.params['match'] == 'block' and commands:
-            commands = list(block)
-        elif module.params['match'] == 'exact':
-            if commands or config.keys() != block:
-                commands = list(block)
+    for cmd, replace in zip(block, block_replace):
+        match = match_re(cmd, config)
+        matches.append(match)
+        if (not match and module.params['state'] == 'present') or \
+           (match and module.params['state'] == 'absent') or \
+           (module.params['match'] == 'force'):
+            commands.append(apply_positional(replace, match))
 
     if commands:
-        if ancestors:
-            commands[:0] = ancestors
+        try:
+            if module.params['match'] == 'block':
+                commands = list(block_replace)
+            commands = list(apply_named(commands, matches))
 
-        if before_block:
-            commands[:0] = before_block
+            if ancestors:
+                if matches:
+                    ancestors = list(apply_named(ancestors, matches))
+                commands[:0] = ancestors
 
-        if after_block:
-            commands.extend(after_block)
+            if before_block:
+                if matches:
+                    before_block = list(apply_named(before_block, matches))
+                commands[:0] = before_block
 
-        if not module.check_mode and not offline_mode:
+            if after_block:
+                if matches:
+                    after_block = list(apply_named(after_block, matches))
+                commands.extend(after_block)
+        except KeyError, exc:
+            module.fail_json(msg='missing named argument: %s' % exc.message)
+
+        if not module.check_mode and not offline:
             if not connection:
                 connection = ios_connection(module)
 
@@ -370,6 +420,6 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.ssh import *
 from ansible.module_utils.ios import *
-
 if __name__ == '__main__':
     main()
+
