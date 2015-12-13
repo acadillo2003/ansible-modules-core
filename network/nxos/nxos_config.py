@@ -116,7 +116,7 @@ options:
         C(config) and C(config_file) arguments are mutually exclusive
     required: false
     default: null
-  offline_mode:
+  offline:
     description:
       - This flag controls if the module runs in online or offline mode.  When
         in online mode, the module will connect to the device to get the
@@ -222,9 +222,6 @@ def parse(config, indent=2):
                             child = child[a]
                         child[text] = collections.OrderedDict()
                     except KeyError:
-                        # there is a bug in 'show running-config all' that
-                        # where the indent is inconsistent.  Temporarily
-                        # those statements are collected here.
                         # FIXME deal with indent inconsistencies
                         if '_errors' not in data:
                             data['_errors'] = list()
@@ -243,7 +240,10 @@ def to_list(arg):
 def get_config(module):
     config = module.params['config']
     if not config:
-        config = nxapi_command(module, 'show running-config all')
+        cmd = 'show running-config'
+        if  module.params['all']:
+            cmd += ' all'
+        config = nxapi_command(module, cmd)
         config = config[0]['ins_api']['outputs']['output']['body']
     return config or dict()
 
@@ -265,14 +265,30 @@ def parse_config(config, ancestors=None):
         pass
     return config
 
-def to_re(expression):
-    expression = '^{}$'.format(expression)
-    return re.compile(expression)
-
-def match_re(regexp, values):
+def match_re(pattern, values):
+    regexp = re.compile(r'%s' % pattern)
     for value in values:
-        if regexp.match(value):
-            return True
+        match = regexp.search(value)
+        if match:
+            return match
+
+def apply_positional(value, match):
+    if match is None:
+        return value
+    # TODO: trap IndexError
+    for v in re.findall(r"\\\d+", value):
+        index = int(v.replace('\\', ''))
+        val = match.group(index)
+        value = value.replace(v, val)
+    return value
+
+def apply_named(values, matches):
+    for value in values:
+        for match in matches:
+            if match:
+                value = value.format(**match.groupdict())
+        yield value
+
 
 def main():
 
@@ -280,16 +296,17 @@ def main():
         line=dict(),
         replace=dict(),
         block=dict(type='list'),
+        block_replace=dict(type='list'),
         parent=dict(),
         ancestors=dict(type='list'),
         before_block=dict(type='list'),
         after_block=dict(type='list'),
-        match=dict(default='line', choices=['line', 'block', 'exact', 'force']),
+        match=dict(default='line', choices=['line', 'block', 'force']),
         config=dict(),
         config_file=dict(),
-        enable_mode=dict(default=True, choices=[True]),
         include_all=dict(default=True, type='bool'),
-        offline_mode=dict(default=False, type='bool')
+        offline=dict(default=False, type='bool'),
+        state=dict(default='present', choices=['present', 'absent'])
     )
 
     required_one_of = [('line', 'block')]
@@ -301,11 +318,11 @@ def main():
                           required_one_of=required_one_of,
                           supports_check_mode=True)
 
-    offline_mode = module.params['offline_mode']
-    if offline_mode:
+    offline = module.params['offline']
+    if offline:
         if not module.params['config'] and not module.params['config_file']:
             module.fail_json(msg='config or config_file must be specified '
-                                 'when offline_mode is enabled')
+                                 'when offline is enabled')
     else:
         if not module.params['host'] and not module.params['device']:
             module.fail_json(msg='host or device argument must be specified '
@@ -315,9 +332,7 @@ def main():
     after_block = module.params['after_block']
 
     line = module.params['line']
-    block = module.params['block']
-    if not block:
-        block = [line]
+    block = module.params['block'] or [line]
 
     replace = module.params['replace']
 
@@ -326,31 +341,36 @@ def main():
     if not ancestors and parent:
         ancestors = [parent]
 
-    candidate = (ancestors, block)
-    if module.params['match'] == 'force':
-        config = dict()
-    else:
-        if module.params['config_file']:
-            contents = load_config(module)
-        else:
-            contents = get_config(module)
-        config = parse_config(contents, ancestors)
+    replace = module.params['replace']
+    block_replace = module.params['block_replace']
+    if not block_replace and replace:
+        block_replace = [replace]
+    elif not block_replace:
+        block_replace = list(block)
 
-    result = dict(changed=False, warnings=list())
+    parent = module.params['parent']
+    ancestors = module.params['ancestors']
+    if not ancestors and parent:
+        ancestors = [parent]
+
+    if module.params['config_file']:
+        contents = load_config(module)
+    else:
+        contents = get_config(module)
+    config = parse_config(contents, ancestors)
+    config = config.keys()
+
+    result = dict(changed=False)
     commands = list()
+    matches = list()
 
-    if replace:
-        if not match_re(to_re(line), config.keys()):
-            commands.append(replace)
-    else:
-        for cmd in block:
-            if cmd not in config:
-                commands.append(cmd)
-        if module.params['match'] == 'block' and commands:
-            commands = list(block)
-        elif module.params['match'] == 'exact':
-            if commands or config.keys() != block:
-                commands = list(block)
+    for cmd, replace in zip(block, block_replace):
+        match = match_re(cmd, config)
+        matches.append(match)
+        if (not match and module.params['state'] == 'present') or \
+           (match and module.params['state'] == 'absent') or \
+           (module.params['match'] == 'force'):
+            commands.append(apply_positional(replace, match))
 
     if commands:
         if ancestors:
@@ -362,7 +382,7 @@ def main():
         if after_block:
             commands.extend(after_block)
 
-        if not module.check_mode and not offline_mode:
+        if not module.check_mode and not offline:
             response = nxapi_command(module, commands, 'cli_conf')
             output = to_list(response[0]['ins_api']['outputs']['output'])
             for resp in output:
