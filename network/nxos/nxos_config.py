@@ -241,7 +241,7 @@ def get_config(module):
     config = module.params['config']
     if not config:
         cmd = 'show running-config'
-        if  module.params['all']:
+        if  module.params['include_all']:
             cmd += ' all'
         config = nxapi_command(module, cmd)
         config = config[0]['ins_api']['outputs']['output']['body']
