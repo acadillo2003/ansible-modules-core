@@ -15,391 +15,104 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
-
 DOCUMENTATION = """
----
-module: eos_config
-version_added: "2.0"
-author: "Peter Sprygada (@privateip)"
-short_description: Send and receive eos configuration commands over eapi
-description:
-  - Sends and receives eos configuration commands using eapi over a
-    HTTP/S transport.  This module supports sending either a single
-    command or an ordered set of the remote host.  This module
-    requires that eapi support has been enabled on the device.
-notes:
-  - Supports additional arguments via the eapi shared modules.  See
-    module_utils/eapi.py for details.
-options:
-  line:
-    description:
-      - The configuration line in the device configuration that should be
-        present  The current node configuration is evaluated and if
-        the line is not found it will be added
-    required: false
-    default: null
-  replace:
-    description:
-      - The value for the replace argument will be inserted into the
-        current nodes running configuraiton if the value of C(line) is
-        not found.  The C(replace) argument is mutually exclusive with the
-        C(block) argument
-    required: false
-    default: null
-  block:
-    description:
-      - The block of configuration to apply to the node.  Use block
-        to configure more than one line statement.  For each line
-        in the block, the configuration is evaluated and missing lines
-        are added to the configuration based on the C(strategy).  The
-        C(block) and C(line) arguments are mutually exclusive.
-    type: list
-    required: false
-    default: null
-  parent:
-    description:
-      - The configuration parent for the C(line) or C(block).  The
-        C(parent) argument is a one line configuration statement
-        for entering sub mode configuration commands.  It is mutually
-        exclusive with C(ancestors).  See EXAMPLES for details.
-    required: false
-    default: null
-  ancestors:
-    description:
-      - The ancestors of the block or line of configuration.  The
-        C(ancestors) argument allows for nested configuration options and
-        is mutually exclusive with C(parent).  See EXAMPLES for details.
-    type: list
-    required: false
-    default: null
-  before_block:
-    description:
-      - A set of configuration commands to execute before the block.  The
-        C(before_block) is execute if and only if the commands in either
-        C(line) or C(block) trigger a configuration change.
-    required: false
-    default: null
-  after_block:
-    description:
-      - a set of configuration commands to execute after the block.  This
-        argument is the same as C(before_block) only it is configured
-        once the C(block) statements are completed
-    required: false
-    default: null
-  match:
-    description:
-      - Specifies the match strategy to use when evaluting a block of
-        configuration from the node.  By default, the match strategy is
-        configured to evaluate a line and if the line isn't present it
-        will be added to the config.  If the match strategy is set to
-        block, the entire block is added to the configuration if any line
-        is invalid.  If the match strategy is set of exact, the config
-        block must match exactly. Finally setting the value to C(force)
-        will not evalue the current config and simply configure the node
-        with the block.
-    required: false
-    default: line
-    choices: ['line', 'block', 'exact', 'force]
-  config:
-    description:
-      - Overrides the device configuration file with this value.  By
-        default, this module will attach to the node to collect the current
-        running-config.  Using this argument will override that behavior
-        and validate the configuration passed
-    required: false
-    default: null
-  config_file:
-    description:
-      - The path to the device configuration for offline access to the
-        configuration file.  This option is the same as the C(config)
-        option only it will read the config contents from a file.  The
-        C(config) and C(config_file) arguments are mutually exclusive
-    required: false
-    default: null
-  include_all:
-    description:
-      - This flag controls how the running-config is collected from
-        the remote device.  When set to true, the all keyword is added
-        to the show running-config command.  When set to false, it is
-        not added
-    required: false
-    default: true
-  offline_mode:
-    description:
-      - This flag controls if the module runs in online or offline mode.  When
-        in online mode, the module will connect to the device to get the
-        config and push config changes.  When in offline mode, the module
-        expects the config or config_file argument to provided and it
-        generates a list of commands in the result
-    required: false
-    default: false
 """
 
 EXAMPLES = """
-# Note: These examples do not set eapi parameters, see module_utils/eapi.py
-
-# make a simple configuration change
-- eos_config:
-    line: "hostname switch"
-
-# configure an interface block
-- eos_config:
-    block:
-      - "description example config block"
-      - "ip address 1.1.1.1/32"
-      - "no shutdown"
-    parent: "interface loopback0"
-
-# configure an access list.  this example will evalue the current
-# configuration and if any statement doesn't match in the acl
-# it will remove the acl (the before_block)  and reconfigured
-# it with statements in block
-- eos_config:
-    block:
-      - "10 permit ip 172.30.10.0/24 any"
-      - "20 permit ip 172.30.11.0/24 any"
-      - "30 permit ip 172.30.12.0/24 any"
-      - "40 permit ip 172.30.13.0/24 any"
-    parent: "ip access-list example"
-    before_block:
-      - "no ip access-list example"
-    strategy: block
-
-# use ancestors to configure nested commands
-- eos_config:
-    block:
-      - "remote-as 65000"
-      - "update source loopback0"
-    ancestors: ["router bgp 65000", "neighbor 1.1.1.1"]
 """
 
 RETURN = """
-commands:
-  description: The list of commands used to configure the device
-  returned: success
-  type: list
-  sample: "[{ ... }]"
-
-config:
-  description: The block extracted from the running-config
-  returned: success
-  type: list
-  sample: "[...]"
 """
-import re
-import collections
 
-
-def parse(config, indent=3):
-    regexp = re.compile(r'^\s*(.+)$')
-    line_re = re.compile(r'\S')
-    invalid_re = re.compile(r'^(!|end)')
-
-    ancestors = list()
-    data = collections.OrderedDict()
-    banner = False
-
-    for line in config:
-        text = str(line).strip()
-
-        if not invalid_re.match(text):
-
-            # handle the banner text
-            if text.startswith('banner') or banner:
-                banner = True
-                if text.startswith('banner'):
-                    cmd = text
-                    banner_text = ''
-                elif text.startswith('EOF'):
-                    banner = False
-                    banner_text += text
-                    data[cmd] = {banner_text: dict()}
-                else:
-                    banner_text += '%s\n' % text
-
-            # handle top level commands
-            elif line_re.match(line):
-                data[text] = collections.OrderedDict()
-                ancestors = [text]
-
-            # handle sub level commands
-            else:
-                match = regexp.match(line)
-                if match:
-                    line_indent = match.start(1)
-                    level = line_indent / indent
-
-                    try:
-                        ancestors[level] = text
-                    except IndexError:
-                        ancestors.append(text)
-
-                    try:
-                        child = data[ancestors[0]]
-                        for a in ancestors[1:level]:
-                            child = child[a]
-                        child[text] = collections.OrderedDict()
-                    except KeyError:
-                        # FIXME deal with indent inconsistencies
-                        if '_errors' not in data:
-                            data['_errors'] = list()
-                        data['_errors'].append((ancestors, text))
-
-
-    return data
-
-def to_list(arg):
-    if isinstance(arg, (list, tuple)):
-        return list(arg)
-    elif arg is not None:
-        return [arg]
-    else:
-        return []
-
-def get_config(module):
-    config = module.params['config']
-    if not config:
+def get_config(conn, module):
+    config = module.params['config'] or dict()
+    if not config and not module.params['force']:
         cmd = 'show running-config'
         if module.params['include_all']:
             cmd += ' all'
-        response, headers = eapi_command(module, cmd, 'text')
-        config = response[0]['output']
-    return config or dict()
-
-def load_config(module):
-    try:
-        filename = module.params['config_file']
-        return open(filename).read()
-    except IOError, exc:
-        return module.fail_json(msg=exc.strerror, errno=exc.errno)
-
-def parse_config(config, ancestors=None):
-    config = parse(str(config).split('\n'))
-
-    if not ancestors:
-        return collections.OrderedDict([(k, v) for k, v in config.iteritems() if not v])
-
-    try:
-        for ancestor in ancestors:
-            config = config[ancestor]
-    except KeyError:
-        return dict()
-
+        resp = conn.send(cmd)
+        config = resp[0]
     return config
 
-def to_re(expression):
-    expression = '^{}$'.format(expression)
-    return re.compile(expression)
+def backup_config(config, module):
+    host = module.params['cli_host']
+    open('backup_%s' % host, 'w').write(config)
 
-def match_re(regexp, values):
-    for value in values:
-        if regexp.match(value):
-            return True
+def on_connect(conn, module):
+    conn.send('terminal length 0')
+    if module.params['cli_authorize']:
+        conn.authorize(module.params['cli_auth_pass'])
+
+def on_configure(conn):
+    conn.send('configure terminal')
 
 def main():
 
-    spec = dict(
-        line=dict(),
-        replace=dict(),
-        block=dict(type='list'),
-        parent=dict(),
-        ancestors=dict(type='list'),
-        before_block=dict(type='list'),
-        after_block=dict(type='list'),
-        match=dict(default='line', choices=['line', 'block', 'exact', 'force']),
-        config=dict(),
-        config_file=dict(),
-        enable_mode=dict(default=True, choices=[True]),
+    argument_spec = dict(
+        src=dict(),
+        backup=dict(default=False, type='bool'),
+        force=dict(default=False, type='bool'),
+        replace=dict(default=False, type='bool'),
         include_all=dict(default=True, type='bool'),
-        offline_mode=dict(default=False, type='bool')
+        config=dict()
     )
 
-    required_one_of = [('line', 'block')]
-    mutually_exclusive = [('parent', 'ancestors'), ('config', 'config_file'),
-                          ('block', 'replace'), ('line', 'block')]
+    mutually_exclusive = [('config', 'backup'), ('config', 'force')]
 
-    module = eapi_module(argument_spec=spec,
-                         mutually_exclusive=mutually_exclusive,
-                         required_one_of=required_one_of,
-                         supports_check_mode=True)
+    module = cli_module(argument_spec=argument_spec,
+                        mutually_exclusive=mutually_exclusive,
+                        supports_check_mode=True)
 
-    offline_mode = module.params['offline_mode']
-    if offline_mode:
-        if not module.params['config'] and not module.params['config_file']:
-            module.fail_json(msg='config or config_file must be specified '
-                                 'when offline_mode is enabled')
-    else:
-        if not module.params['host'] and not module.params['device']:
-            module.fail_json(msg='host or device argument must be specified '
-                                 'when using module in online mode')
+    connection = cli_connection(module)
 
-    before_block = module.params['before_block']
-    after_block = module.params['after_block']
-
-    line = module.params['line']
-    block = module.params['block']
-    if not block:
-        block = [line]
-
+    src = module.params['src']
+    force = module.params['force']
+    backup = module.params['backup']
     replace = module.params['replace']
 
-    parent = module.params['parent']
-    ancestors = module.params['ancestors']
-    if not ancestors and parent:
-        ancestors = [parent]
+    candidate = parse(src, indent=3)
 
-    candidate = (ancestors, block)
-    if module.params['match'] == 'force':
-        config = dict()
-    else:
-        if module.params['config_file']:
-            contents = load_config(module)
+    contents = get_config(connection, module)
+    config = parse(contents, indent=3)
+
+    if backup and not module.check_mode:
+        backup_config(contents, module)
+
+    result = dict(changed=False)
+
+    commands = collections.OrderedDict()
+    toplevel = [c.text for c in config]
+
+    for line in candidate:
+        if line.text in ['!', '']:
+            continue
+
+        if not line.parents:
+            if line.text not in toplevel:
+                expand(line, commands)
         else:
-            contents = get_config(module)
-        config = parse_config(contents, ancestors)
+            item = compare(line, config)
+            if item:
+                expand(item, commands)
 
-    result = dict(changed=False, warnings=list())
-    commands = list()
-
-    if replace:
-        if not match_re(to_re(line), config.keys()):
-            commands.append(replace)
-    else:
-        for cmd in block:
-            if cmd not in config:
-                commands.append(cmd)
-        if module.params['match'] == 'block' and commands:
-            commands = list(block)
-        elif module.params['match'] == 'exact':
-            if commands or config.keys() != block:
-                commands = list(block)
+    commands = flatten(commands, list())
 
     if commands:
-        if ancestors:
-            commands[:0] = ancestors
-
-        if before_block:
-            commands[:0] = before_block
-
-        if after_block:
-            commands.extend(after_block)
-
-        if not module.check_mode and not offline_mode:
-            response, headers = eapi_configure(module, commands)
-            for resp in response:
-                if 'warnings' in resp:
-                    result['warnings'].append(resp['warnings'])
-                elif resp != {}:
-                    module.fail_json(msg='one or more commands failed',
-                                     error=resp)
+        if not module.check_mode:
+            try:
+                commands = [str(c).strip() for c in commands]
+                response = connection.configure(commands)
+            except ShellError, exc:
+                return module.fail_json(msg=exc.message, command=exc.command)
         result['changed'] = True
 
     result['commands'] = commands
     return module.exit_json(**result)
 
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
-from ansible.module_utils.eapi import *
 
+from ansible.module_utils.basic import *
+from ansible.module_utils.shell import *
+from ansible.module_utils.net_config import *
 if __name__ == '__main__':
     main()
+
