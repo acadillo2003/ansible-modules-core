@@ -168,7 +168,7 @@ def main():
                 for c in commands:
                     logger.info(c)
                 response = provider.configure(commands)
-            except Exception as exc:
+            except Exception, exc:
                 return module.fail_json(msg=exc.message, command=exc.command)
         result['changed'] = True
 
