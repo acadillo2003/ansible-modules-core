@@ -28,6 +28,9 @@ description:
     against a provided candidate configuration. If there are changes, the
     candidate configuration is merged with the current configuration and
     pushed into OpenSwitch
+Note:
+  - This module is designed to run on the device and uses libraries that
+    are only available as part of OpenSwitch.
 options:
   src:
     description:
@@ -36,6 +39,15 @@ options:
         evalutated against the current running configuration from the
         device.
     required: true
+  force:
+    description:
+      - The force argument instructs the module not to consider the
+        current device running-config.  When set to true, this will
+        cause the module to push the contents of I(src) into the device
+        without first checking if already configured.
+    required: false
+    default: false
+    choices: BOOLEANS
 """
 
 EXAMPLES = """
@@ -67,10 +79,14 @@ updates:
 """
 import time
 
-from runconfig import runconfig
-from opsrest.settings import settings
-from opsrest.manager import OvsdbConnectionManager
-from opslib import restparser
+try:
+    from runconfig import runconfig
+    from opsrest.settings import settings
+    from opsrest.manager import OvsdbConnectionManager
+    from opslib import restparser
+    OPS_LIB=True
+except ImportError:
+    OPS_LIB=False
 
 def get_idl():
     manager = OvsdbConnectionManager(settings.get('ovs_remote'),
@@ -126,19 +142,27 @@ def merge(changeset, config=None):
 def main():
 
     argument_spec = dict(
-        src=dict()
+        src=dict(),
+        force=dict(default=False, type='bool')
     )
 
     module = AnsibleModule(argument_spec=argument_spec,
                            supports_check_mode=True)
 
+    if not OPS_LIB:
+        module.fail_json(msg='could not load ops library')
+
     src = module.params['src']
+    force = module.params['force']
 
-    idl = get_idl()
-    schema = get_schema()
+    if not force:
+        idl = get_idl()
+        schema = get_schema()
 
-    run_config_util = runconfig.RunConfigUtil(idl, schema)
-    config = run_config_util.get_running_config()
+        run_config_util = runconfig.RunConfigUtil(idl, schema)
+        config = run_config_util.get_running_config()
+    else:
+        config = dict()
 
     result = dict(changed=False)
 
