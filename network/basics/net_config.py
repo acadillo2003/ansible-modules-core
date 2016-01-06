@@ -16,12 +16,86 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
 DOCUMENTATION = """
+---
+module: net_config
+version_added: "2.1"
+author: "Peter sprygada (@privateip)"
+short_description: Manage network device configurations over SSH
+description:
+  - Manages network device configurations over SSH.  This module
+    allows implementors to work with the device running-config.  It
+    provides a way to push a set of commands onto a network device
+    by evaluting the current running-config and only pushing configuration
+    commands that are not already configured.  The config source can
+    be a set of commands or a template.
+options:
+  src:
+    description:
+      - The path to the config source.  The source can be either a
+        file with config or a template that will be merged during
+        runtime.  By default the task will first search for the source
+        file in role or playbook root folder in templates/<provider>
+        and then folder templates unless a full path to the source
+        is provided.
+    required: false
+    default: null
+  force:
+    description:
+      - The force argument instructs the module not to consider the
+        current device running-config.  When set to true, this will
+        cause the module to push the contents of I(src) into the device
+        without first checking if already configured.
+    required: false
+    default: false
+  include_defaults:
+    description:
+      - The module, by default, will collect the current device
+        running-config to use as a base for comparision to the commands
+        in I(src).  Setting this value to true will cause the command
+        issued to add any necessary flags to collect all defaults as
+        well as the device configuration.  If the destination device
+        does not support such a flag, this argument is silently ignored.
+    required: false
+    default: false
+  config:
+    description:
+      - The module, by default, will connect to the remote device and
+        retrieve the current running-config to use as a base for comparing
+        against the contents of source.  There are times when it is not
+        desirable to have the task get the current running-config for
+        every task.  The I(config) argument allows the implementer to
+        pass in the configuruation to use as the base config for
+        comparision.
+    required: false
+    default: null
 """
 
 EXAMPLES = """
+
+- name: push a configuration onto the device
+  net_config:
+    src: config.j2
+
+- name: forceable push a configuration onto the device
+  net_config:
+    src: config.j2
+    force: yes
+
+- name: provide the base configuration for comparision
+  net_config:
+    src: candidate_config.txt
+    config: current_config.txt
+
 """
 
 RETURN = """
+
+commands:
+  description: The set of commands that will be pushed to the remote device
+  returned: always
+  type: list
+  sample: [...]
+
 """
 
 def compare(this, other):
@@ -60,9 +134,7 @@ def main():
 
     argument_spec = dict(
         src=dict(),
-        backup=dict(default=False, type='bool'),
         force=dict(default=False, type='bool'),
-        config_replace=dict(default=False, type='bool'),
         include_defaults=dict(default=True, type='bool'),
         config=dict()
     )
@@ -79,10 +151,6 @@ def main():
 
     contents = get_config(provider)
     config = provider.parse(contents)
-
-    if module.params['backup'] and not module.check_mode:
-        host = module.params['cli_host']
-        open('backup_%s' % host, 'w').write(config)
 
     result = dict(changed=False)
 
