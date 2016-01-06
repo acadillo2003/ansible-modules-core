@@ -47,6 +47,7 @@ options:
         without first checking if already configured.
     required: false
     default: false
+    choices: BOOLEANS
   include_defaults:
     description:
       - The module, by default, will collect the current device
@@ -57,6 +58,16 @@ options:
         does not support such a flag, this argument is silently ignored.
     required: false
     default: false
+    choices: BOOLEANS
+  backup:
+    description:
+      - When this argument is configured true, the module will backup
+        the running-config from the node prior to making any changes.
+        The backup file will be written to backup_{{ hostname }} in
+        the root of the playbook directory.
+    required: false
+    default: false
+    choices: BOOLEANS
   config:
     description:
       - The module, by default, will connect to the remote device and
@@ -136,6 +147,7 @@ def main():
         src=dict(),
         force=dict(default=False, type='bool'),
         include_defaults=dict(default=True, type='bool'),
+        backup=dict(default=False, type='bool'),
         config=dict()
     )
 
@@ -146,13 +158,13 @@ def main():
                         supports_check_mode=True)
 
     provider = get_provider(module)
+    result = dict(changed=False)
 
     candidate = provider.parse(module.params['src'])
 
     contents = get_config(provider)
+    result['_config'] = contents
     config = provider.parse(contents)
-
-    result = dict(changed=False)
 
     commands = collections.OrderedDict()
     toplevel = [c.text for c in config]
