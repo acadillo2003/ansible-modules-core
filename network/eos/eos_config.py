@@ -17,58 +17,130 @@
 #
 DOCUMENTATION = """
 ---
-module: eos_config
-short_description:
+module: net_config
+version_added: "2.1"
+author: "Peter sprygada (@privateip)"
+short_description: Manage network device configurations over SSH
 description:
-
-options:    
-    backup:
-    
-    config_replace:
-
-    config:
-    
-    force:
-    
-    include_defaults:
-        description: Whenever the running config is evaluated use the 'all' option to include default settings. 
-        required: no
-        default: True
-    
-    log_level:
-        description: Set to info, debug or off to control logging detail level.
-        required: no
-        default: info
-    
-    log_reset:
-        description: Set to True, if you want the log file erased before each run.
-        required: no
-        default True
-
-    log_path:
-        description: The full pathname of the log file.
-        required: no
-        default: './eos_config'
-
-    src:
-        description: The jinja2 template used to generate configuration commands.
-        required: yes
-        default: None
-
+  - Manages network device configurations over SSH.  This module
+    allows implementors to work with the device running-config.  It
+    provides a way to push a set of commands onto a network device
+    by evaluting the current running-config and only pushing configuration
+    commands that are not already configured.  The config source can
+    be a set of commands or a template.
+options:
+  src:
+    description:
+      - The path to the config source.  The source can be either a
+        file with config or a template that will be merged during
+        runtime.  By default the task will first search for the source
+        file in role or playbook root folder in templates/<module>
+        and then folder templates unless a full path to the source
+        is provided.
+    required: false
+    default: null
+  force:
+    description:
+      - The force argument instructs the module not to consider the
+        current device running-config.  When set to true, this will
+        cause the module to push the contents of I(src) into the device
+        without first checking if already configured.
+    required: false
+    default: false
+    choices: BOOLEANS
+  include_defaults:
+    description:
+      - The module, by default, will collect the current device
+        running-config to use as a base for comparision to the commands
+        in I(src).  Setting this value to true will cause the command
+        issued to add any necessary flags to collect all defaults as
+        well as the device configuration.  If the destination device
+        does not support such a flag, this argument is silently ignored.
+    required: false
+    default: false
+    choices: BOOLEANS
+  backup:
+    description:
+      - When this argument is configured true, the module will backup
+        the running-config from the node prior to making any changes.
+        The backup file will be written to backup_{{ hostname }} in
+        the root of the playbook directory.
+    required: false
+    default: false
+    choices: BOOLEANS
+  ignore_missing:
+    description:
+      - This flag instruts the module to ignore lines that are missing
+        from the device configuration.  In some instances, the config
+        command doesn't show up in the running-config because it is the
+    required: false
+    default: false
+    choices: BOOLEANS
+  config:
+    description:
+      - The module, by default, will connect to the remote device and
+        retrieve the current running-config to use as a base for comparing
+        against the contents of source.  There are times when it is not
+        desirable to have the task get the current running-config for
+        every task.  The I(config) argument allows the implementer to
+        pass in the configuruation to use as the base config for
+        comparision.
+    required: false
+    default: null
 """
 
 EXAMPLES = """
+
+- name: push a configuration onto the device
+  net_config:
+    src: config.j2
+
+- name: forceable push a configuration onto the device
+  net_config:
+    src: config.j2
+    force: yes
+
+- name: provide the base configuration for comparision
+  net_config:
+    src: candidate_config.txt
+    config: current_config.txt
+
+
+# The example below shows how to use ignore_missing.  In the example,
+# the device running config is already configured with 'no shutdown' but
+# the value does not show up in the running-config as it is the default.  The
+# ignore_missing argument will not cause the task to try to reconfigure the
+# same command since the source value is ignored.
+
+vars:
+  candidate_config:
+    interface Ethernet1
+       no shutdown
+tasks:
+  - name: configure interface administrative state
+    net_config:
+      src: candidate_config.txt
+      ignore_missing: yes
+
 """
 
 RETURN = """
+
+commands:
+  description: The set of commands that will be pushed to the remote device
+  returned: always
+  type: list
+  sample: [...]
+
 """
 
-def compare(this, other):
+def compare(this, other, ignore_missing=False):
     parents = [item.text for item in this.parents]
     for entry in other:
         if this == entry:
             return None
-    return this
+    if not ignore_missing:
+        return this
 
 def expand(obj, queue):
     block = [item.raw for item in obj.parents]
@@ -89,59 +161,46 @@ def flatten(data, obj):
         flatten(v, obj)
     return obj
 
-def get_config(provider):
-    config = provider.module.params['config'] or dict()
-    if not config and not provider.module.params['force']:
-        config = provider.config
+def get_config(module):
+    config = module.params['config'] or dict()
+    if not config and not module.params['force']:
+        config = module.config
     return config
 
-def backup_config(config, module):
-    host = module.params['host']
-    open('backup_%s' % host, 'w').write(config)
-
-
 def main():
+    """ main entry point for module execution
+    """
 
     argument_spec = dict(
         src=dict(),
-        backup=dict(default=False, type='bool'),
         force=dict(default=False, type='bool'),
-        config_replace=dict(default=False, type='bool'),
         include_defaults=dict(default=True, type='bool'),
+        backup=dict(default=False, type='bool'),
         config=dict(),
-        log_path=dict(default='./eos_config.log', type='str')
+        host=dict(required=True),
+        port=dict(type='int'),
+        username=dict(required=True),
+        password=dict(no_log=True),
+        authorize=dict(default=False, type='bool'),
+        auth_pass=dict(no_log=True),
+        transport=dict(choices=['cli', 'eapi']),
+        use_ssl=dict(default=True, type='bool')
     )
 
     mutually_exclusive = [('config', 'backup'), ('config', 'force')]
 
-    module = net_module(argument_spec=argument_spec,
+    module = get_module(argument_spec=argument_spec,
                         mutually_exclusive=mutually_exclusive,
-                        supports_check_mode=True
-                        )
-
-    logger = Log(module)
-    module.logger = logger 
-    
-    for p in module.params:
-        logger.debug("%s: %s" % (p, module.params[p]))
-    
-    src = module.params['src']
-    force = module.params['force']
-    backup = module.params['backup']
-    replace = module.params['config_replace']
-    
-    logger.debug("candidate:")
-    logger.debug(src)
-    
-    provider = get_provider(module)
-    candidate = provider.parse(src)
-    contents = get_config(provider)    
-    config = provider.parse(contents)
-
-    if backup and not module.check_mode:
-        backup_config(contents, module)
+                        supports_check_mode=True)
 
     result = dict(changed=False)
+
+    candidate = module.parse_config(module.params['src'])
+
+    contents = get_config(module)
+    result['_config'] = module.config
+
+    config = module.parse_config(contents)
 
     commands = collections.OrderedDict()
     toplevel = [c.text for c in config]
@@ -157,29 +216,27 @@ def main():
             item = compare(line, config)
             if item:
                 expand(item, commands)
-    
+
     commands = flatten(commands, list())
 
     if commands:
         if not module.check_mode:
             try:
                 commands = [str(c).strip() for c in commands]
-                logger.info('Executing commands: ')
-                for c in commands:
-                    logger.info(c)
-                response = provider.configure(commands)
-            except Exception, exc:
+                response = module.configure(commands)
+            except ShellError, exc:
                 return module.fail_json(msg=exc.message, command=exc.command)
         result['changed'] = True
 
     result['commands'] = commands
     return module.exit_json(**result)
 
-from ansible.module_utils.basic import *
-from ansible.module_utils.network import *
-from ansible.module_utils.urls import * 
-from ansible.module_utils.eapi import *
 
+from ansible.module_utils.basic import *
+from ansible.module_utils.urls import *
+from ansible.module_utils.shell import *
+from ansible.module_utils.netconfig import *
+from ansible.module_utils.eos import *
 if __name__ == '__main__':
     main()
 
