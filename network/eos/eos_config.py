@@ -177,14 +177,6 @@ def main():
         include_defaults=dict(default=True, type='bool'),
         backup=dict(default=False, type='bool'),
         config=dict(),
-        host=dict(required=True),
-        port=dict(type='int'),
-        username=dict(required=True),
-        password=dict(no_log=True),
-        authorize=dict(default=False, type='bool'),
-        auth_pass=dict(no_log=True),
-        transport=dict(choices=['cli', 'eapi']),
-        use_ssl=dict(default=True, type='bool')
     )
 
     mutually_exclusive = [('config', 'backup'), ('config', 'force')]
