@@ -176,7 +176,7 @@ def main():
         force=dict(default=False, type='bool'),
         include_defaults=dict(default=True, type='bool'),
         backup=dict(default=False, type='bool'),
-        ignore_missing(default=False, type='bool'),
+        ignore_missing=dict(default=False, type='bool'),
         config=dict(),
     )
 
