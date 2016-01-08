@@ -16,69 +16,183 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
 DOCUMENTATION = """
+---
+module: ios_config
+version_added: "2.1"
+author: "Peter sprygada (@privateip)"
+short_description: Manage Cisco IOS device configurations over SSH
+description:
+  - Manages network device configurations over SSH.  This module
+    allows implementors to work with the device running-config.  It
+    provides a way to push a set of commands onto a network device
+    by evaluting the current running-config and only pushing configuration
+    commands that are not already configured.  The config source can
+    be a set of commands or a template.
+options:
+  src:
+    description:
+      - The path to the config source.  The source can be either a
+        file with config or a template that will be merged during
+        runtime.  By default the task will first search for the source
+        file in role or playbook root folder in templates/<module>
+        and then folder templates unless a full path to the source
+        is provided.
+    required: false
+    default: null
+  force:
+    description:
+      - The force argument instructs the module not to consider the
+        current device running-config.  When set to true, this will
+        cause the module to push the contents of I(src) into the device
+        without first checking if already configured.
+    required: false
+    default: false
+    choices: BOOLEANS
+  include_defaults:
+    description:
+      - The module, by default, will collect the current device
+        running-config to use as a base for comparision to the commands
+        in I(src).  Setting this value to true will cause the command
+        issued to add any necessary flags to collect all defaults as
+        well as the device configuration.  If the destination device
+        does not support such a flag, this argument is silently ignored.
+    required: false
+    default: false
+    choices: BOOLEANS
+  backup:
+    description:
+      - When this argument is configured true, the module will backup
+        the running-config from the node prior to making any changes.
+        The backup file will be written to backup_{{ hostname }} in
+        the root of the playbook directory.
+    required: false
+    default: false
+    choices: BOOLEANS
+  ignore_missing:
+    description:
+      - This flag instruts the module to ignore lines that are missing
+        from the device configuration.  In some instances, the config
+        command doesn't show up in the running-config because it is the
+    required: false
+    default: false
+    choices: BOOLEANS
+  config:
+    description:
+      - The module, by default, will connect to the remote device and
+        retrieve the current running-config to use as a base for comparing
+        against the contents of source.  There are times when it is not
+        desirable to have the task get the current running-config for
+        every task.  The I(config) argument allows the implementer to
+        pass in the configuruation to use as the base config for
+        comparision.
+    required: false
+    default: null
 """
 
 EXAMPLES = """
+
+- name: push a configuration onto the device
+  net_config:
+    src: config.j2
+
+- name: forceable push a configuration onto the device
+  net_config:
+    src: config.j2
+    force: yes
+
+- name: provide the base configuration for comparision
+  net_config:
+    src: candidate_config.txt
+    config: current_config.txt
+
+
+# The example below shows how to use ignore_missing.  In the example,
+# the device running config is already configured with 'no shutdown' but
+# the value does not show up in the running-config as it is the default.  The
+# ignore_missing argument will not cause the task to try to reconfigure the
+# same command since the source value is ignored.
+
+vars:
+  candidate_config:
+    interface Ethernet1
+       no shutdown
+tasks:
+  - name: configure interface administrative state
+    net_config:
+      src: candidate_config.txt
+      ignore_missing: yes
+
 """
 
 RETURN = """
+
+commands:
+  description: The set of commands that will be pushed to the remote device
+  returned: always
+  type: list
+  sample: [...]
+
 """
 
-def get_config(conn, module):
+def compare(this, other, ignore_missing=False):
+    parents = [item.text for item in this.parents]
+    for entry in other:
+        if this == entry:
+            return None
+    if not ignore_missing:
+        return this
+
+def expand(obj, queue):
+    block = [item.raw for item in obj.parents]
+    block.append(obj.raw)
+
+    current_level = queue
+    for b in block:
+        if b not in current_level:
+            current_level[b] = collections.OrderedDict()
+        current_level = current_level[b]
+    for c in obj.children:
+        if c.raw not in current_level:
+            current_level[c.raw] = collections.OrderedDict()
+
+def flatten(data, obj):
+    for k, v in data.items():
+        obj.append(k)
+        flatten(v, obj)
+    return obj
+
+def get_config(module):
     config = module.params['config'] or dict()
     if not config and not module.params['force']:
-        cmd = 'show running-config'
-        if module.params['include_all']:
-            cmd += ' all'
-        resp = conn.send(cmd)
-        config = resp[0]
+        config = module.config
     return config
 
-def backup_config(config, module):
-    host = module.params['cli_host']
-    open('backup_%s' % host, 'w').write(config)
-
-def on_connect(conn, module):
-    conn.send('terminal length 0')
-    if module.params['cli_authorize']:
-        conn.authorize(module.params['cli_auth_pass'])
-
-def on_configure(conn):
-    conn.send('configure terminal')
-
 def main():
+    """ main entry point for module execution
+    """
 
     argument_spec = dict(
         src=dict(),
-        backup=dict(default=False, type='bool'),
         force=dict(default=False, type='bool'),
-        replace=dict(default=False, type='bool'),
-        include_all=dict(default=True, type='bool'),
-        config=dict()
+        include_defaults=dict(default=True, type='bool'),
+        backup=dict(default=False, type='bool'),
+        config=dict(),
     )
 
     mutually_exclusive = [('config', 'backup'), ('config', 'force')]
 
-    module = cli_module(argument_spec=argument_spec,
+    module = get_module(argument_spec=argument_spec,
                         mutually_exclusive=mutually_exclusive,
                         supports_check_mode=True)
 
-    connection = cli_connection(module)
-
-    src = module.params['src']
-    force = module.params['force']
-    backup = module.params['backup']
-    replace = module.params['replace']
-
-    candidate = parse(src, indent=1)
-
-    contents = get_config(connection, module)
-    config = parse(contents, indent=1)
-
-    if backup and not module.check_mode:
-        backup_config(contents, module)
-
     result = dict(changed=False)
+
+    candidate = module.parse_config(module.params['src'])
+
+    contents = get_config(module)
+    result['_config'] = module.config
+
+    config = module.parse_config(contents)
 
     commands = collections.OrderedDict()
     toplevel = [c.text for c in config]
@@ -101,7 +215,7 @@ def main():
         if not module.check_mode:
             try:
                 commands = [str(c).strip() for c in commands]
-                response = connection.configure(commands)
+                response = module.configure(commands)
             except ShellError, exc:
                 return module.fail_json(msg=exc.message, command=exc.command)
         result['changed'] = True
@@ -111,9 +225,9 @@ def main():
 
 
 from ansible.module_utils.basic import *
-from ansible.module_utils.issh import *
-from ansible.module_utils.cli import *
-from ansible.module_utils.net_config import *
+from ansible.module_utils.shell import *
+from ansible.module_utils.netcfg import *
+from ansible.module_utils.ios import *
 if __name__ == '__main__':
     main()
 
