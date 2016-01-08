@@ -24,12 +24,13 @@ EXAMPLES = """
 RETURN = """
 """
 
-def compare(this, other):
+def compare(this, other, ignore_missing=False):
     parents = [item.text for item in this.parents]
     for entry in other:
         if this == entry:
             return None
-    return this
+    if not ignore_missing:
+        return this
 
 def expand(obj, queue):
     block = [item.raw for item in obj.parents]
@@ -50,10 +51,10 @@ def flatten(data, obj):
         flatten(v, obj)
     return obj
 
-def get_config(provider):
-    config = provider.module.params['config'] or dict()
-    if not config and not provider.module.params['force']:
-        config = provider.config
+def get_config(module):
+    config = module.params['config'] or dict()
+    if not config and not module.params['force']:
+        config = module.config
     return config
 
 def backup_config(config, module):
@@ -65,43 +66,33 @@ def main():
 
     argument_spec = dict(
         src=dict(),
-        backup=dict(default=False, type='bool'),
         force=dict(default=False, type='bool'),
-        config_replace=dict(default=False, type='bool'),
         include_defaults=dict(default=True, type='bool'),
+        backup=dict(default=False, type='bool'),
+        ignore_missing=dict(default=False, type='bool'),
         config=dict(),
         log_path=dict(default='./nxos_config.log', type='str')
     )
     
     mutually_exclusive = [('config', 'backup'), ('config', 'force')]
 
-    module = net_module(argument_spec=argument_spec,
+    module = get_module(argument_spec=argument_spec,
                         mutually_exclusive=mutually_exclusive,
                         supports_check_mode=True)
 
-    logger = Log(module)
-    module.logger = logger 
-    
-    for p in module.params:
-        logger.debug("%s: %s" % (p, module.params[p]))
-    
-    src = module.params['src']
-    force = module.params['force']
-    backup = module.params['backup']
-    replace = module.params['config_replace']
-    
-    logger.debug("candidate:")
-    logger.debug(src)
-    
-    provider = get_provider(module)
-    candidate = provider.parse(src)
-    contents = get_config(provider)    
-    config = provider.parse(contents)
-
-    if backup and not module.check_mode:
-        backup_config(contents, module)
-
+    ignore_missing = module.params['ignore_missing']
     result = dict(changed=False)
+
+    for p in module.params:
+        module.logger.debug("%s: %s" % (p, module.params[p]))
+    
+    candidate = module.parse_config(module.params['src'])
+    contents = get_config(module)
+    config = module.parse_config(contents)
+    
+
+    # if backup and not module.check_mode:
+    #    backup_config(contents, module)
 
     commands = collections.OrderedDict()
     toplevel = [c.text for c in config]
@@ -114,7 +105,7 @@ def main():
             if line.text not in toplevel:
                 expand(line, commands)
         else:
-            item = compare(line, config)
+            item = compare(line, config, ignore_missing)
             if item:
                 expand(item, commands)
     
@@ -124,10 +115,10 @@ def main():
         if not module.check_mode:
             try:
                 commands = [str(c).strip() for c in commands]
-                logger.info('Executing commands: ')
+                module.logger.info('Executing commands: ')
                 for c in commands:
-                    logger.info(c)
-                response = provider.configure(commands)
+                    module.logger.info(c)
+                response = module.configure(commands)
             except Exception, exc:
                 return module.fail_json(msg=exc.message)
         result['changed'] = True
@@ -135,11 +126,12 @@ def main():
     result['commands'] = commands
     return module.exit_json(**result)
 
-
 from ansible.module_utils.basic import *
-from ansible.module_utils.network import *
-from ansible.module_utils.urls import * 
-from ansible.module_utils.nxapi import *
+from ansible.module_utils.urls import *
+from ansible.module_utils.shell import *
+from ansible.module_utils.netcfg import *
+from ansible.module_utils.nxos import *
+from ansible.module_utils.log import *
 
 if __name__ == '__main__':
     main()
