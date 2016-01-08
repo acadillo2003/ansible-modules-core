@@ -28,15 +28,15 @@ description:
     by evaluting the current running-config and only pushing configuration
     commands that are not already configured.  The config source can
     be a set of commands or a template.
+extends_documentation_fragment: ios
 options:
   src:
     description:
       - The path to the config source.  The source can be either a
         file with config or a template that will be merged during
         runtime.  By default the task will first search for the source
-        file in role or playbook root folder in templates/<module>
-        and then folder templates unless a full path to the source
-        is provided.
+        file in role or playbook root folder in templates unless a full
+        path to the file is given.
     required: false
     default: null
   force:
@@ -176,6 +176,7 @@ def main():
         force=dict(default=False, type='bool'),
         include_defaults=dict(default=True, type='bool'),
         backup=dict(default=False, type='bool'),
+        ignore_missing=dict(default=False, type='bool'),
         config=dict(),
     )
 
@@ -184,6 +185,8 @@ def main():
     module = get_module(argument_spec=argument_spec,
                         mutually_exclusive=mutually_exclusive,
                         supports_check_mode=True)
+
+    ignore_missing = module.params['ignore_missing']
 
     result = dict(changed=False)
 
@@ -205,7 +208,7 @@ def main():
             if line.text not in toplevel:
                 expand(line, commands)
         else:
-            item = compare(line, config)
+            item = compare(line, config, ignore_missing)
             if item:
                 expand(item, commands)
 
@@ -213,11 +216,8 @@ def main():
 
     if commands:
         if not module.check_mode:
-            try:
-                commands = [str(c).strip() for c in commands]
-                response = module.configure(commands)
-            except ShellError, exc:
-                return module.fail_json(msg=exc.message, command=exc.command)
+            commands = [str(c).strip() for c in commands]
+            response = module.configure(commands)
         result['changed'] = True
 
     result['commands'] = commands
