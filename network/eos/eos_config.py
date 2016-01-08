@@ -17,7 +17,7 @@
 #
 DOCUMENTATION = """
 ---
-module: net_config
+module: eos_config
 version_added: "2.1"
 author: "Peter sprygada (@privateip)"
 short_description: Manage network device configurations over SSH
@@ -92,16 +92,16 @@ options:
 EXAMPLES = """
 
 - name: push a configuration onto the device
-  net_config:
+  eos_config:
     src: config.j2
 
 - name: forceable push a configuration onto the device
-  net_config:
+  eos_config:
     src: config.j2
     force: yes
 
 - name: provide the base configuration for comparision
-  net_config:
+  eos_config:
     src: candidate_config.txt
     config: current_config.txt
 
@@ -118,7 +118,7 @@ vars:
        no shutdown
 tasks:
   - name: configure interface administrative state
-    net_config:
+    eos_config:
       src: candidate_config.txt
       ignore_missing: yes
 
@@ -176,6 +176,7 @@ def main():
         force=dict(default=False, type='bool'),
         include_defaults=dict(default=True, type='bool'),
         backup=dict(default=False, type='bool'),
+        ignore_missing(default=False, type='bool'),
         config=dict(),
     )
 
@@ -185,6 +186,7 @@ def main():
                         mutually_exclusive=mutually_exclusive,
                         supports_check_mode=True)
 
+    ignore_missing = module.params['ignore_missing']
     result = dict(changed=False)
 
     candidate = module.parse_config(module.params['src'])
@@ -205,7 +207,7 @@ def main():
             if line.text not in toplevel:
                 expand(line, commands)
         else:
-            item = compare(line, config)
+            item = compare(line, config, ignore_missing)
             if item:
                 expand(item, commands)
 
