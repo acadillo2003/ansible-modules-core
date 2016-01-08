@@ -16,6 +16,121 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
 DOCUMENTATION = """
+---
+module: nxos_config
+version_added: "2.1"
+author: "Peter sprygada (@privateip)"
+short_description: Manage Cisco NXOSdevice configurations
+description:
+  - Manages network device configurations over SSH or NXAPI.  This module
+    allows implementors to work with the device running-config.  It
+    provides a way to push a set of commands onto a network device
+    by evaluting the current running-config and only pushing configuration
+    commands that are not already configured.  The config source can
+    be a set of commands or a template.
+extends_documentation_fragment: nxos
+options:
+  src:
+    description:
+      - The path to the config source.  The source can be either a
+        file with config or a template that will be merged during
+        runtime.  By default the task will search for the source
+        file in role or playbook root folder in templates directory.
+    required: false
+    default: null
+  force:
+    description:
+      - The force argument instructs the module to not consider the
+        current devices running-config.  When set to true, this will
+        cause the module to push the contents of I(src) into the device
+        without first checking if already configured.
+    required: false
+    default: false
+    choices: BOOLEANS
+  include_defaults:
+    description:
+      - The module, by default, will collect the current device
+        running-config to use as a base for comparision to the commands
+        in I(src).  Setting this value to true will cause the module
+        to issue the command `show running-config all` to include all
+        device settings.
+    required: false
+    default: false
+    choices: BOOLEANS
+  backup:
+    description:
+      - When this argument is configured true, the module will backup
+        the running-config from the node prior to making any changes.
+        The backup file will be written to backup_{{ hostname }} in
+        the root of the playbook directory.
+    required: false
+    default: false
+    choices: BOOLEANS
+  ignore_missing:
+    description:
+      - This flag instruts the module to ignore lines that are missing
+        from the device configuration.  In some instances, the config
+        command doesn't show up in the running-config because it is the
+        default.  See examples for how this is used.
+    required: false
+    default: false
+    choices: BOOLEANS
+  config:
+    description:
+      - The module, by default, will connect to the remote device and
+        retrieve the current running-config to use as a base for comparing
+        against the contents of source.  There are times when it is not
+        desirable to have the task get the current running-config for
+        every task in a playbook.  The I(config) argument allows the
+        implementer to pass in the configuruation to use as the base
+        config for comparision.
+    required: false
+    default: null
+"""
+
+EXAMPLES = """
+
+- name: push a configuration onto the device
+  nxos_config:
+    src: config.j2
+
+- name: forceable push a configuration onto the device
+  nxos_config:
+    src: config.j2
+    force: yes
+
+- name: provide the base configuration for comparision
+  nxos_config:
+    src: candidate_config.txt
+    config: current_config.txt
+
+
+# The example below shows how to use ignore_missing.  In the example,
+# the device running config is already configured with 'no shutdown' but
+# the value does not show up in the running-config as it is the default.  The
+# ignore_missing argument will not cause the task to try to reconfigure the
+# same command since the source value is ignored.
+
+vars:
+  candidate_config:
+    interface Ethernet0/0
+       no shutdown
+tasks:
+  - name: configure interface administrative state
+    nxos_config:
+      src: candidate_config.txt
+      ignore_missing: yes
+
+"""
+
+RETURN = """
+
+commands:
+  description: The set of commands that will be pushed to the remote device
+  returned: always
+  type: list
+  sample: [...]
+
 """
 
 EXAMPLES = """
@@ -57,11 +172,6 @@ def get_config(module):
         config = module.config
     return config
 
-def backup_config(config, module):
-    host = module.params['host']
-    open('backup_%s' % host, 'w').write(config)
-
-
 def main():
 
     argument_spec = dict(
@@ -70,10 +180,9 @@ def main():
         include_defaults=dict(default=True, type='bool'),
         backup=dict(default=False, type='bool'),
         ignore_missing=dict(default=False, type='bool'),
-        config=dict(),
-        log_path=dict(default='./nxos_config.log', type='str')
+        config=dict()
     )
-    
+
     mutually_exclusive = [('config', 'backup'), ('config', 'force')]
 
     module = get_module(argument_spec=argument_spec,
@@ -83,16 +192,9 @@ def main():
     ignore_missing = module.params['ignore_missing']
     result = dict(changed=False)
 
-    for p in module.params:
-        module.logger.debug("%s: %s" % (p, module.params[p]))
-    
     candidate = module.parse_config(module.params['src'])
     contents = get_config(module)
     config = module.parse_config(contents)
-    
-
-    # if backup and not module.check_mode:
-    #    backup_config(contents, module)
 
     commands = collections.OrderedDict()
     toplevel = [c.text for c in config]
@@ -108,19 +210,13 @@ def main():
             item = compare(line, config, ignore_missing)
             if item:
                 expand(item, commands)
-    
+
     commands = flatten(commands, list())
 
     if commands:
         if not module.check_mode:
-            try:
-                commands = [str(c).strip() for c in commands]
-                module.logger.info('Executing commands: ')
-                for c in commands:
-                    module.logger.info(c)
-                response = module.configure(commands)
-            except Exception, exc:
-                return module.fail_json(msg=exc.message)
+            commands = [str(c).strip() for c in commands]
+            response = module.configure(commands)
         result['changed'] = True
 
     result['commands'] = commands
@@ -131,7 +227,5 @@ from ansible.module_utils.urls import *
 from ansible.module_utils.shell import *
 from ansible.module_utils.netcfg import *
 from ansible.module_utils.nxos import *
-from ansible.module_utils.log import *
-
 if __name__ == '__main__':
     main()
