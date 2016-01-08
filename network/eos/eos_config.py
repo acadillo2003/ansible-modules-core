@@ -20,29 +20,28 @@ DOCUMENTATION = """
 module: eos_config
 version_added: "2.1"
 author: "Peter sprygada (@privateip)"
-short_description: Manage network device configurations over SSH
+short_description: Manage Arista EOS device configurations
 description:
-  - Manages network device configurations over SSH.  This module
+  - Manages network device configurations over SSH or eAPI.  This module
     allows implementors to work with the device running-config.  It
     provides a way to push a set of commands onto a network device
     by evaluting the current running-config and only pushing configuration
     commands that are not already configured.  The config source can
     be a set of commands or a template.
+extends_documentation_fragment: eos
 options:
   src:
     description:
       - The path to the config source.  The source can be either a
         file with config or a template that will be merged during
-        runtime.  By default the task will first search for the source
-        file in role or playbook root folder in templates/<module>
-        and then folder templates unless a full path to the source
-        is provided.
+        runtime.  By default the task will search for the source
+        file in role or playbook root folder in templates directory.
     required: false
     default: null
   force:
     description:
-      - The force argument instructs the module not to consider the
-        current device running-config.  When set to true, this will
+      - The force argument instructs the module to not consider the
+        current devices running-config.  When set to true, this will
         cause the module to push the contents of I(src) into the device
         without first checking if already configured.
     required: false
@@ -52,10 +51,9 @@ options:
     description:
       - The module, by default, will collect the current device
         running-config to use as a base for comparision to the commands
-        in I(src).  Setting this value to true will cause the command
-        issued to add any necessary flags to collect all defaults as
-        well as the device configuration.  If the destination device
-        does not support such a flag, this argument is silently ignored.
+        in I(src).  Setting this value to true will cause the module
+        to issue the command `show running-config all` to include all
+        device settings.
     required: false
     default: false
     choices: BOOLEANS
@@ -73,6 +71,7 @@ options:
       - This flag instruts the module to ignore lines that are missing
         from the device configuration.  In some instances, the config
         command doesn't show up in the running-config because it is the
+        default.  See examples for how this is used.
     required: false
     default: false
     choices: BOOLEANS
@@ -82,9 +81,9 @@ options:
         retrieve the current running-config to use as a base for comparing
         against the contents of source.  There are times when it is not
         desirable to have the task get the current running-config for
-        every task.  The I(config) argument allows the implementer to
-        pass in the configuruation to use as the base config for
-        comparision.
+        every task in a playbook.  The I(config) argument allows the
+        implementer to pass in the configuruation to use as the base
+        config for comparision.
     required: false
     default: null
 """
