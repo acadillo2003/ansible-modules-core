@@ -213,11 +213,8 @@ def main():
 
     if commands:
         if not module.check_mode:
-            try:
-                commands = [str(c).strip() for c in commands]
-                response = module.configure(commands)
-            except ShellError, exc:
-                return module.fail_json(msg=exc.message, command=exc.command)
+            commands = [str(c).strip() for c in commands]
+            response = module.configure(commands)
         result['changed'] = True
 
     result['commands'] = commands
@@ -227,7 +224,7 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
 from ansible.module_utils.shell import *
-from ansible.module_utils.netconfig import *
+from ansible.module_utils.netcfg import *
 from ansible.module_utils.eos import *
 if __name__ == '__main__':
     main()
