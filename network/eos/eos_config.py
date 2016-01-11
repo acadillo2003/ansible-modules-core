@@ -68,13 +68,23 @@ options:
     choices: BOOLEANS
   ignore_missing:
     description:
-      - This flag instruts the module to ignore lines that are missing
+      - This flag instructs the module to ignore lines that are missing
         from the device configuration.  In some instances, the config
         command doesn't show up in the running-config because it is the
         default.  See examples for how this is used.
     required: false
     default: false
     choices: BOOLEANS
+  replace:
+    description:
+      - This argument will cause the provided configuration to be replaced
+        on the destination node.   The use of the replace argument will
+        always cause the task to set changed to true and will implies
+        I(force) is true.  This argument is only valid with I(transport)
+        is eapi.
+    required: false
+    default: false
+    choice: BOOLEANS
   config:
     description:
       - The module, by default, will connect to the remote device and
@@ -176,7 +186,8 @@ def main():
         include_defaults=dict(default=True, type='bool'),
         backup=dict(default=False, type='bool'),
         ignore_missing=dict(default=False, type='bool'),
-        config=dict(),
+        replace=dict(default=False, type='bool'),
+        config=dict()
     )
 
     mutually_exclusive = [('config', 'backup'), ('config', 'force')]
@@ -186,6 +197,8 @@ def main():
                         supports_check_mode=True)
 
     ignore_missing = module.params['ignore_missing']
+    replace = module.params['replace']
+
     result = dict(changed=False)
 
     candidate = module.parse_config(module.params['src'])
@@ -215,7 +228,7 @@ def main():
     if commands:
         if not module.check_mode:
             commands = [str(c).strip() for c in commands]
-            response = module.configure(commands)
+            response = module.configure(commands, replace=replace)
         result['changed'] = True
 
     result['commands'] = commands
