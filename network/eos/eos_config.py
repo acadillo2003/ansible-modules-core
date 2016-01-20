@@ -204,7 +204,7 @@ def main():
     candidate = module.parse_config(module.params['src'])
 
     contents = get_config(module)
-    result['_config'] = module.config
+    result['_backup'] = module.config
 
     config = module.parse_config(contents)
 
@@ -228,12 +228,11 @@ def main():
     if commands:
         if not module.check_mode:
             commands = [str(c).strip() for c in commands]
-            response = module.configure(commands, replace=replace)
+            response = module.configure(commands)
         result['changed'] = True
 
     result['commands'] = commands
     return module.exit_json(**result)
-
 
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
