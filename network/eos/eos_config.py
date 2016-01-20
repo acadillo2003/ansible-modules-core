@@ -183,7 +183,7 @@ def main():
     argument_spec = dict(
         src=dict(),
         force=dict(default=False, type='bool'),
-        include_defaults=dict(default=True, type='bool'),
+        include_defaults=dict(default=False, type='bool'),
         backup=dict(default=False, type='bool'),
         ignore_missing=dict(default=False, type='bool'),
         replace=dict(default=False, type='bool'),
@@ -228,7 +228,10 @@ def main():
     if commands:
         if not module.check_mode:
             commands = [str(c).strip() for c in commands]
-            response = module.configure(commands)
+            if replace:
+                response = module.config_replace(commands)
+            else:
+                response = module.configure(commands)
         result['changed'] = True
 
     result['commands'] = commands
