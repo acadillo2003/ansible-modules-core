@@ -17,6 +17,52 @@
 #
 
 DOCUMENTATION = """
+---
+module: eos_command
+version_added: "2.1"
+author: "Peter sprygada (@privateip)"
+short_description: Run arbitrary command on EOS device
+description:
+  - Sends an aribtrary command to and EOS node and returns the results
+    read from the device.  The M(eos_command) modulule includes an
+    argument that will cause the module to wait for a specific condition
+    before returning or timing out if the condition is not met.
+extends_documentation_fragment: eos
+options:
+  command:
+    description:
+      - The command to send to the remote EOS device over the
+        configured provider.  The resulting output from the command
+        is returned.  If the I(waitfor) argument is provided, the
+        module is not returned until the condition is satisfied or
+        the number of retires as expired.
+    required: true
+  waitfor:
+    description:
+      - Specifies what to evaluate from the output of the command
+        and what conditionals to apply.  This argument will cause
+        the task to wait for a particular conditional to be true
+        before moving forward.   If the conditional is not true
+        by the configured retries, the task fails.  See examples.
+    required: false
+    default: null
+  retries:
+    description:
+      - Specifies the number of retries a command should by tried
+        before it is considered failed.  The command is run on the
+        target device every retry and evaluated against the waitfor
+        conditionals
+    required: false
+    default: 10
+  interval:
+    description:
+      - Configures the interval in seconds to wait between retries
+        of the command.  If the command does not pass the specified
+        conditional, the interval indicates how to long to wait before
+        trying the command again.
+   required: false
+   default: 1
+
 """
 
 EXAMPLES = """
@@ -24,6 +70,7 @@ EXAMPLES = """
 
 RETURN = """
 """
+
 import time
 import shlex
 
