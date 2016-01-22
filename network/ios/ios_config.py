@@ -193,7 +193,7 @@ def main():
     candidate = module.parse_config(module.params['src'])
 
     contents = get_config(module)
-    #result['_config'] = module.config
+    result['_backup'] = module.config
 
     config = module.parse_config(contents)
 
