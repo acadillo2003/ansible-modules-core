@@ -20,7 +20,7 @@ DOCUMENTATION = """
 module: nxos_config
 version_added: "2.1"
 author: "Peter sprygada (@privateip)"
-short_description: Manage Cisco NXOSdevice configurations
+short_description: Manage Cisco NXOS device configurations
 description:
   - Manages network device configurations over SSH or NXAPI.  This module
     allows implementors to work with the device running-config.  It
@@ -131,12 +131,6 @@ commands:
   type: list
   sample: [...]
 
-"""
-
-EXAMPLES = """
-"""
-
-RETURN = """
 """
 
 def compare(this, other, ignore_missing=False):
