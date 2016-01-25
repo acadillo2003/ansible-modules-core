@@ -29,9 +29,9 @@ description:
     before returning or timing out if the condition is not met.
 extends_documentation_fragment: eos
 options:
-  command:
+  commands:
     description:
-      - The command to send to the remote EOS device over the
+      - The commands to send to the remote EOS device over the
         configured provider.  The resulting output from the command
         is returned.  If the I(waitfor) argument is provided, the
         module is not returned until the condition is satisfied or
@@ -66,70 +66,136 @@ options:
 """
 
 EXAMPLES = """
+
+- eos_command:
+    commands:
+      - show version
+  register: output
+
+- eos_command:
+    commands:
+      - show version
+    waitfor:
+      - "result[0] contains 4.15.0F"
+
+- eos_command:
+  commands:
+    - show version | json
+    - show interfaces | json
+    - show version
+  waitfor:
+    - "result[2] contains '4.15.0F'"
+    - "result[1].interfaces.Management1.interfaceAddress[0].primaryIp.maskLen eq 24"
+    - "result[0].modelName == 'vEOS'"
+
 """
 
 RETURN = """
+
+result:
+  description: the set of responses from the commands
+  returned: always
+  type: list
+  sample: ['...', '...']
+
+failed_conditionals:
+  description: the conditionals that failed
+  retured: failed
+  type: list
+  sample: ['...', '...']
+
 """
 
 import time
 import shlex
+import re
+import json
 
-def get_response(data, module):
+INDEX_RE = re.compile(r'(\[\d+\])')
+
+def get_response(data):
     try:
-        json = module.from_json(data)
+        json_data = json.loads(data)
     except ValueError:
-        json = None
-    return dict(data=data, json=json)
+        json_data = None
+    return dict(data=data, json=json_data)
 
-def get_value(data, key):
-    for k in key.split('.'):
-        data = data.get(k)
-    return data
+class Conditional(object):
 
-def eq(this, other):
-    return this == other
+    OPERATORS = {
+        'eq': ['eq', '=='],
+        'neq': ['neq', 'ne', '!='],
+        'gt': ['gt', '>'],
+        'ge': ['ge', '>='],
+        'lt': ['lt', '<'],
+        'le': ['le', '<='],
+        'contains': ['contains', 'in']
+    }
 
-def ne(this, other):
-    return this != other
+    def __init__(self, conditional):
+        self.raw = conditional
 
-def gt(this, other):
-    return this > other
+        key, op, val = shlex.split(conditional)
+        self.key = key
+        self.func = self.func(op)
+        self.value = self._cast_value(val)
 
-def ge(this, other):
-    return this >= other
+    def __call__(self, data):
+        value = self.get_value(dict(result=data))
+        return self.func(value)
 
-def lt(this, other):
-    return this < other
-
-def le(this, other):
-    return this <= other
-
-def contains(this, other):
-    return this in other
-
-def to_re(expression):
-    expression = '^{}$'.format(expression)
-    return re.compile(expression)
-
-def match_re(regexp, values):
-    for value in values:
-        if regexp.match(value):
+    def _cast_value(self, value):
+        if value in BOOLEANS_TRUE:
             return True
+        elif value in BOOLEANS_FALSE:
+            return False
+        elif re.match(r'^\d+\.d+$', value):
+            return float(value)
+        elif re.match(r'^\d+$', value):
+            return int(value)
+        else:
+            return unicode(value)
 
-OPERATORS = {
-    eq: ['eq', '=='],
-    ne: ['ne', '!='],
-    gt: ['gt', '>'],
-    ge: ['ge', '>='],
-    lt: ['lt', '<'],
-    le: ['le', '<='],
-    contains: ['contains', 'in']
-}
+    def func(self, oper):
+        for func, operators in self.OPERATORS.items():
+            if oper in operators:
+                return getattr(self, func)
+
+    def get_value(self, result):
+        for key in self.key.split('.'):
+            match = re.match(r'^(\w+)\[(\d+)\]', key)
+            if match:
+                key, index = match.groups()
+                result = result[key][int(index)]
+            else:
+                result = result.get(key)
+        return result
+
+    def eq(self, value):
+        return value == self.value
+
+    def neq(self, value):
+        return value != self.value
+
+    def gt(self, value):
+        return value > self.value
+
+    def ge(self, value):
+        return value >= self.value
+
+    def lt(self, value):
+        return value < self.value
+
+    def le(self, value):
+        return value <= self.value
+
+    def contains(self, value):
+        return self.value in value
 
 def main():
     spec = dict(
-        command=dict(),
-        waitfor=dict(),
+        commands=dict(type='list'),
+        waitfor=dict(type='list'),
         retries=dict(default=10, type='int'),
         interval=dict(default=1, type='int')
     )
@@ -137,45 +203,38 @@ def main():
     module = get_module(argument_spec=spec,
                         supports_check_mode=True)
 
-    command = module.params['command']
-    waitfor = module.params['waitfor']
+    commands = module.params['commands']
+
     retries = module.params['retries']
     interval = module.params['interval']
 
-    if waitfor:
-        key, operator, value = shlex.split(waitfor)
+    queue = set()
+    for entry in (module.params['waitfor'] or list()):
+        queue.add(Conditional(entry))
 
-        if value in BOOLEANS_TRUE:
-            value = True
-        elif value in BOOLEANS_FALSE:
-            value = False
+    result = dict(changed=False, result=list())
 
-        if key[0] == 'r':
-            match = re.match(r'^r"(.*)"$')
-            if match:
-                regexp = to_re(match.group(1))
+    while retries > 0:
+        response = module.execute(commands)
+        result['result'] = response
 
-        for func, operators in OPERATORS.items():
-            if operator in operators:
-                break
-        else:
-            module.fail_json(msg='unknown operator')
+        for index, cmd in enumerate(commands):
+            if cmd.endswith('json'):
+                response[index] = json.loads(response[index])
 
-        count = 0
-        while count != retries:
-            data = module.execute(command)
-            response = get_response(data[0], module)
+        for item in list(queue):
+            if item(response):
+                queue.remove(item)
 
-            curval = get_value(response.get('json'), key)
-            if func(curval, value):
-                break
+        if not queue:
+            break
 
-            time.sleep(interval)
-            count += 1
-        else:
-            module.fail_json(msg='timeout waiting for value')
+        time.sleep(interval)
+        retries -= 1
+    else:
+        failed_conditions = [item.raw for item in queue]
+        module.fail_json(msg='timeout waiting for value', failed_conditions=failed_conditions)
 
-    result = dict(changed=False)
     return module.exit_json(**result)
 
 
