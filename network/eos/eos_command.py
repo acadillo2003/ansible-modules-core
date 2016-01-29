@@ -60,8 +60,8 @@ options:
         of the command.  If the command does not pass the specified
         conditional, the interval indicates how to long to wait before
         trying the command again.
-   required: false
-   default: 1
+    required: false
+    default: 1
 
 """
 
