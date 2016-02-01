@@ -15,54 +15,82 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
+
 DOCUMENTATION = """
 ---
 module: nxos_config
 version_added: "2.1"
 author: "Peter sprygada (@privateip)"
-short_description: Manage Cisco NXOS device configurations
+short_description: Manage Cisco NXOS configuration sections
 description:
-  - Manages network device configurations over SSH or NXAPI.  This module
-    allows implementors to work with the device running-config.  It
-    provides a way to push a set of commands onto a network device
-    by evaluting the current running-config and only pushing configuration
-    commands that are not already configured.  The config source can
-    be a set of commands or a template.
+  - Cisco NXOS configurations use a simple block indent file sytanx
+    for segementing configuration into sections.  This module provides
+    an implementation for working with NXOS configuration sections in
+    a deterministic way.  This module works with either CLI or NXAPI
+    transports.
 extends_documentation_fragment: nxos
 options:
-  src:
+  commands:
     description:
-      - The path to the config source.  The source can be either a
-        file with config or a template that will be merged during
-        runtime.  By default the task will search for the source
-        file in role or playbook root folder in templates directory.
+      - The ordered set of commands that should be configured in the
+        section.  The commands must be the exact same commands as found
+        in the device running-config.  Be sure to note the configuration
+        command syntanx as some commands are automatically modified by the
+        device config parser.
+    required: true
+  parents:
+    description:
+      - The ordered set of parents that uniquely identify the section
+        the commands should be checked against.  If the parents argument
+        is omitted, the commands are checked against the set of top
+        level or global commands.
     required: false
     default: null
+  before:
+    description:
+      - The ordered set of commands to push on to the command stack if
+        a change needs to be made.  This allows the playbook designer
+        the opportunity to perform configuration commands prior to pushing
+        any changes without affecting how the set of commands are matched
+        against the system
+    required: false
+    default: null
+  after:
+    description:
+      - The ordered set of commands to append to the end of the command
+        stack if a changed needs to be made.  Just like with I(before) this
+        allows the playbook designer to append a set of commands to be
+        executed after the command set.
+    required: false
+    default: null
+  match:
+    description:
+      - Instructs the module on the way to perform the matching of
+        the set of commands against the current device config.  If
+        match is set to I(line), commands are matched line by line.  If
+        match is set to I(strict), command lines are matched with respect
+        to position.  Finally if match is set to I(exact), command lines
+        must be an equal match.
+    required: false
+    default: line
+    choices: ['line', 'strict', 'exact']
+  replace
+    description:
+      - Instructs the module on the way to perform the configuration
+        on the device.  If the replace argument is set to I(line) then
+        the modified lines are pushed to the device in configuration
+        mode.  If the replace argument is set to I(block) then the entire
+        command block is pushed to the device in configuration mode if any
+        line is not correct
+    required: false
+    default: line
+    choices: ['line', 'block']
   force:
     description:
       - The force argument instructs the module to not consider the
         current devices running-config.  When set to true, this will
         cause the module to push the contents of I(src) into the device
         without first checking if already configured.
-    required: false
-    default: false
-    choices: BOOLEANS
-  include_defaults:
-    description:
-      - The module, by default, will collect the current device
-        running-config to use as a base for comparision to the commands
-        in I(src).  Setting this value to true will cause the module
-        to issue the command `show running-config all` to include all
-        device settings.
-    required: false
-    default: false
-    choices: BOOLEANS
-  backup:
-    description:
-      - When this argument is configured true, the module will backup
-        the running-config from the node prior to making any changes.
-        The backup file will be written to backup_{{ hostname }} in
-        the root of the playbook directory.
     required: false
     default: false
     choices: BOOLEANS
@@ -80,20 +108,30 @@ options:
 """
 
 EXAMPLES = """
-
-- name: push a configuration onto the device
-  nxos_config:
-    src: config.j2
-
-- name: forceable push a configuration onto the device
-  nxos_config:
-    src: config.j2
+- nxos_config:
+    commands: ['hostname {{ inventory_hostname }}']
     force: yes
 
-- name: provide the base configuration for comparision
-  nxos_config:
-    src: candidate_config.txt
-    config: current_config.txt
+- nxos_config:
+    commands:
+      - 10 permit ip 1.1.1.1/32 any log
+      - 20 permit ip 2.2.2.2/32 any log
+      - 30 permit ip 3.3.3.3/32 any log
+      - 40 permit ip 4.4.4.4/32 any log
+      - 50 permit ip 5.5.5.5/32 any log
+    parents: ['ip access-list test']
+    before: ['no ip access-list test']
+    match: exact
+
+- nxos_config:
+    commands:
+      - 10 permit ip 1.1.1.1/32 any log
+      - 20 permit ip 2.2.2.2/32 any log
+      - 30 permit ip 3.3.3.3/32 any log
+      - 40 permit ip 4.4.4.4/32 any log
+    parents: ['ip access-list test']
+    before: ['no ip access-list test']
+    replace: block
 
 """
 
@@ -103,35 +141,17 @@ commands:
   description: The set of commands that will be pushed to the remote device
   returned: always
   type: list
-  sample: [...]
+  sample: ['...', '...']
+
+response:
+  description: The set of responses from issuing the commands on the device
+  retured: always
+  type: list
+  sample: ['...', '...']
 
 """
-
-def compare(this, other):
-    parents = [item.text for item in this.parents]
-    for entry in other:
-        if this == entry:
-            return None
-    return this
-
-def expand(obj, queue):
-    block = [item.raw for item in obj.parents]
-    block.append(obj.raw)
-
-    current_level = queue
-    for b in block:
-        if b not in current_level:
-            current_level[b] = collections.OrderedDict()
-        current_level = current_level[b]
-    for c in obj.children:
-        if c.raw not in current_level:
-            current_level[c.raw] = collections.OrderedDict()
-
-def flatten(data, obj):
-    for k, v in data.items():
-        obj.append(k)
-        flatten(v, obj)
-    return obj
+import re
+import itertools
 
 def get_config(module):
     config = module.params['config'] or dict()
@@ -139,54 +159,103 @@ def get_config(module):
         config = module.config
     return config
 
+
+def build_candidate(commands, parents, config, strategy):
+    candidate = list()
+
+    if strategy == 'strict':
+        if len(commands) != len(config):
+            candidate = list(commands)
+        else:
+            for index, cmd in enumerate(commands):
+                try:
+                    if cmd != config[index]:
+                        candidate.append(cmd)
+                except IndexError:
+                    candidate.append(cmd)
+
+    elif strategy == 'exact':
+        if len(commands) != len(config):
+            candidate = list(commands)
+        else:
+            for cmd, cfg in itertools.izip(commands, config):
+                if cmd != cfg:
+                    candidate = list(commands)
+                    break
+
+    else:
+        for cmd in commands:
+            if cmd not in config:
+                candidate.append(cmd)
+
+    return candidate
+
+
 def main():
 
     argument_spec = dict(
-        src=dict(),
+        commands=dict(required=True, type='list'),
+        parents=dict(type='list'),
+        before=dict(type='list'),
+        after=dict(type='list'),
+        match=dict(default='line', choices=['line', 'strict', 'exact']),
+        replace=dict(default='line', choices=['line', 'block']),
         force=dict(default=False, type='bool'),
-        include_defaults=dict(default=False, type='bool'),
-        backup=dict(default=False, type='bool'),
         config=dict()
     )
 
-    mutually_exclusive = [('config', 'backup'), ('config', 'force')]
-
     module = get_module(argument_spec=argument_spec,
-                        mutually_exclusive=mutually_exclusive,
-                        supports_check_mode=True)
+                         supports_check_mode=True)
+
+    commands = module.params['commands']
+    parents = module.params['parents'] or list()
+
+    before = module.params['before']
+    after = module.params['after']
+
+    match = module.params['match']
+    replace = module.params['replace']
+
+    contents = get_config(module)
+    config = module.parse_config(contents)
+
+    if parents:
+        for parent in parents:
+            for item in config:
+                if item.text == parent:
+                    config = item
+
+        try:
+            children = [c.text for c in config.children]
+        except AttributeError:
+            children = [c.text for c in config]
+
+    else:
+        children = [c.text for c in config if not c.parents]
 
     result = dict(changed=False)
 
-    candidate = module.parse_config(module.params['src'])
+    candidate = build_candidate(commands, parents, children, match)
 
-    contents = get_config(module)
-    result['_backup'] = contents
-    config = module.parse_config(contents)
-
-    commands = collections.OrderedDict()
-    toplevel = [c.text for c in config]
-
-    for line in candidate:
-        if line.text.startswith('!') or line.text == '':
-            continue
-
-        if not line.parents:
-            if line.text not in toplevel:
-                expand(line, commands)
+    if candidate:
+        if replace == 'line':
+            candidate[:0] = parents
         else:
-            item = compare(line, config)
-            if item:
-                expand(item, commands)
+            candidate = list(parents)
+            candidate.extend(commands)
 
-    commands = flatten(commands, list())
+        if before:
+            candidate[:0] = before
 
-    if commands:
+        if after:
+            candidate.extend(after)
+
         if not module.check_mode:
-            commands = [str(c).strip() for c in commands]
-            response = module.configure(commands)
+            response = module.configure(candidate)
+            result['response'] = response
         result['changed'] = True
 
-    result['commands'] = commands
+    result['commands'] = candidate
     return module.exit_json(**result)
 
 from ansible.module_utils.basic import *
@@ -196,3 +265,4 @@ from ansible.module_utils.netcfg import *
 from ansible.module_utils.nxos import *
 if __name__ == '__main__':
     main()
+
