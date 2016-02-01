@@ -66,15 +66,6 @@ options:
     required: false
     default: false
     choices: BOOLEANS
-  ignore_missing:
-    description:
-      - This flag instruts the module to ignore lines that are missing
-        from the device configuration.  In some instances, the config
-        command doesn't show up in the running-config because it is the
-        default.  See examples for how this is used.
-    required: false
-    default: false
-    choices: BOOLEANS
   config:
     description:
       - The module, by default, will connect to the remote device and
@@ -104,23 +95,6 @@ EXAMPLES = """
     src: candidate_config.txt
     config: current_config.txt
 
-
-# The example below shows how to use ignore_missing.  In the example,
-# the device running config is already configured with 'no shutdown' but
-# the value does not show up in the running-config as it is the default.  The
-# ignore_missing argument will not cause the task to try to reconfigure the
-# same command since the source value is ignored.
-
-vars:
-  candidate_config:
-    interface Ethernet0/0
-       no shutdown
-tasks:
-  - name: configure interface administrative state
-    nxos_config:
-      src: candidate_config.txt
-      ignore_missing: yes
-
 """
 
 RETURN = """
@@ -133,13 +107,12 @@ commands:
 
 """
 
-def compare(this, other, ignore_missing=False):
+def compare(this, other):
     parents = [item.text for item in this.parents]
     for entry in other:
         if this == entry:
             return None
-    if not ignore_missing:
-        return this
+    return this
 
 def expand(obj, queue):
     block = [item.raw for item in obj.parents]
@@ -171,9 +144,8 @@ def main():
     argument_spec = dict(
         src=dict(),
         force=dict(default=False, type='bool'),
-        include_defaults=dict(default=True, type='bool'),
+        include_defaults=dict(default=False, type='bool'),
         backup=dict(default=False, type='bool'),
-        ignore_missing=dict(default=False, type='bool'),
         config=dict()
     )
 
@@ -183,11 +155,12 @@ def main():
                         mutually_exclusive=mutually_exclusive,
                         supports_check_mode=True)
 
-    ignore_missing = module.params['ignore_missing']
     result = dict(changed=False)
 
     candidate = module.parse_config(module.params['src'])
+
     contents = get_config(module)
+    result['_backup'] = contents
     config = module.parse_config(contents)
 
     commands = collections.OrderedDict()
@@ -201,7 +174,7 @@ def main():
             if line.text not in toplevel:
                 expand(line, commands)
         else:
-            item = compare(line, config, ignore_missing)
+            item = compare(line, config)
             if item:
                 expand(item, commands)
 
