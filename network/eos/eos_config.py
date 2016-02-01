@@ -15,226 +15,102 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
+
 DOCUMENTATION = """
----
-module: eos_config
-version_added: "2.1"
-author: "Peter sprygada (@privateip)"
-short_description: Manage Arista EOS device configurations
-description:
-  - Manages network device configurations over SSH or eAPI.  This module
-    allows implementors to work with the device running-config.  It
-    provides a way to push a set of commands onto a network device
-    by evaluting the current running-config and only pushing configuration
-    commands that are not already configured.  The config source can
-    be a set of commands or a template.
-extends_documentation_fragment: eos
-options:
-  src:
-    description:
-      - The path to the config source.  The source can be either a
-        file with config or a template that will be merged during
-        runtime.  By default the task will search for the source
-        file in role or playbook root folder in templates directory.
-    required: false
-    default: null
-  force:
-    description:
-      - The force argument instructs the module to not consider the
-        current devices running-config.  When set to true, this will
-        cause the module to push the contents of I(src) into the device
-        without first checking if already configured.
-    required: false
-    default: false
-    choices: BOOLEANS
-  include_defaults:
-    description:
-      - The module, by default, will collect the current device
-        running-config to use as a base for comparision to the commands
-        in I(src).  Setting this value to true will cause the module
-        to issue the command `show running-config all` to include all
-        device settings.
-    required: false
-    default: false
-    choices: BOOLEANS
-  backup:
-    description:
-      - When this argument is configured true, the module will backup
-        the running-config from the node prior to making any changes.
-        The backup file will be written to backup_{{ hostname }} in
-        the root of the playbook directory.
-    required: false
-    default: false
-    choices: BOOLEANS
-  ignore_missing:
-    description:
-      - This flag instructs the module to ignore lines that are missing
-        from the device configuration.  In some instances, the config
-        command doesn't show up in the running-config because it is the
-        default.  See examples for how this is used.
-    required: false
-    default: false
-    choices: BOOLEANS
-  replace:
-    description:
-      - This argument will cause the provided configuration to be replaced
-        on the destination node.   The use of the replace argument will
-        always cause the task to set changed to true and will implies
-        I(force) is true.  This argument is only valid with I(transport)
-        is eapi.
-    required: false
-    default: false
-    choice: BOOLEANS
-  config:
-    description:
-      - The module, by default, will connect to the remote device and
-        retrieve the current running-config to use as a base for comparing
-        against the contents of source.  There are times when it is not
-        desirable to have the task get the current running-config for
-        every task in a playbook.  The I(config) argument allows the
-        implementer to pass in the configuruation to use as the base
-        config for comparision.
-    required: false
-    default: null
 """
 
 EXAMPLES = """
-
-- name: push a configuration onto the device
-  eos_config:
-    src: config.j2
-
-- name: forceable push a configuration onto the device
-  eos_config:
-    src: config.j2
-    force: yes
-
-- name: provide the base configuration for comparision
-  eos_config:
-    src: candidate_config.txt
-    config: current_config.txt
-
-
-# The example below shows how to use ignore_missing.  In the example,
-# the device running config is already configured with 'no shutdown' but
-# the value does not show up in the running-config as it is the default.  The
-# ignore_missing argument will not cause the task to try to reconfigure the
-# same command since the source value is ignored.
-
-vars:
-  candidate_config:
-    interface Ethernet1
-       no shutdown
-tasks:
-  - name: configure interface administrative state
-    eos_config:
-      src: candidate_config.txt
-      ignore_missing: yes
-
 """
 
 RETURN = """
-
-commands:
-  description: The set of commands that will be pushed to the remote device
-  returned: always
-  type: list
-  sample: [...]
-
 """
-
-def compare(this, other, ignore_missing=False):
-    parents = [item.text for item in this.parents]
-    for entry in other:
-        if this == entry:
-            return None
-    if not ignore_missing:
-        return this
-
-def expand(obj, queue):
-    block = [item.raw for item in obj.parents]
-    block.append(obj.raw)
-
-    current_level = queue
-    for b in block:
-        if b not in current_level:
-            current_level[b] = collections.OrderedDict()
-        current_level = current_level[b]
-    for c in obj.children:
-        if c.raw not in current_level:
-            current_level[c.raw] = collections.OrderedDict()
-
-def flatten(data, obj):
-    for k, v in data.items():
-        obj.append(k)
-        flatten(v, obj)
-    return obj
+import re
 
 def get_config(module):
     config = module.params['config'] or dict()
-    if not config and not module.params['force']:
+    if not config and not module.params['match'] == 'force':
         config = module.config
     return config
 
+
+def build_candidate(commands, config, match):
+    candidate = list()
+    if len(commands) == len(config):
+        for cmd, cfg in itertools.izip(commands, config):
+            if cmd == cfg:
+                candidate.append(cmd)
+    elif match == 'block':
+        candidate = list(commands)
+    else:
+        for index, cmd in enumerate(commands):
+            try:
+                if cmd != config[index]:
+                    candidate.append(cmd)
+            except IndexError:
+                candidate.append(cmd)
+    return candidate
+
+
 def main():
-    """ main entry point for module execution
-    """
 
     argument_spec = dict(
-        src=dict(),
-        force=dict(default=False, type='bool'),
-        include_defaults=dict(default=False, type='bool'),
-        backup=dict(default=False, type='bool'),
-        ignore_missing=dict(default=False, type='bool'),
-        replace=dict(default=False, type='bool'),
+        commands=dict(required=True, type='list'),
+        section=dict(required=True, type='list'),
+        before=dict(type='list'),
+        after=dict(type='list'),
+        match=dict(default='line', choices=['line', 'block', 'force']),
         config=dict()
     )
 
-    mutually_exclusive = [('config', 'backup'), ('config', 'force')]
+    required_one_of = [('line', 'block')]
 
     module = get_module(argument_spec=argument_spec,
-                        mutually_exclusive=mutually_exclusive,
-                        supports_check_mode=True)
+                         supports_check_mode=True)
 
-    ignore_missing = module.params['ignore_missing']
-    replace = module.params['replace']
+    commands = module.params['commands']
+    section = module.params['section']
+
+    before = module.params['before']
+    after = module.params['after']
+
+    match = module.params['match']
+
+    contents = get_config(module)
+    config = module.parse_config(contents)
+
+    cfg = list(config)
+    for parent in section:
+        for item in config:
+            if item.text == parent:
+                cfg = item
 
     result = dict(changed=False)
 
-    candidate = module.parse_config(module.params['src'])
+    children = [c.text for c in cfg.children]
+    candidate = build_candidate(commands, children, match)
 
-    contents = get_config(module)
-    result['_backup'] = module.config
+    if candidate:
+        if match == 'line':
+            candidate[:0] = section
 
-    config = module.parse_config(contents)
+        elif match == 'block':
+            candidate = list(section)
+            candidate.extend(commands)
 
-    commands = collections.OrderedDict()
-    toplevel = [c.text for c in config]
+        if before:
+            candidate[:0] = before
 
-    for line in candidate:
-        if line.text in ['!', '']:
-            continue
+        if after:
+            candidate.extend(after)
 
-        if not line.parents:
-            if line.text not in toplevel:
-                expand(line, commands)
-        else:
-            item = compare(line, config, ignore_missing)
-            if item:
-                expand(item, commands)
-
-    commands = flatten(commands, list())
-
-    if commands:
         if not module.check_mode:
-            commands = [str(c).strip() for c in commands]
             if replace:
                 response = module.config_replace(commands)
             else:
                 response = module.configure(commands)
         result['changed'] = True
 
-    result['commands'] = commands
+    result['commands'] = candidate
     return module.exit_json(**result)
 
 from ansible.module_utils.basic import *
