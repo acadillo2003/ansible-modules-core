@@ -160,6 +160,7 @@ class Conditional(object):
         for func, operators in self.OPERATORS.items():
             if oper in operators:
                 return getattr(self, func)
+        raise AttributeError('unknown operator: %s' % oper)
 
     def get_value(self, result):
         for key in self.key.split('.'):
@@ -208,9 +209,12 @@ def main():
     retries = module.params['retries']
     interval = module.params['interval']
 
-    queue = set()
-    for entry in (module.params['waitfor'] or list()):
-        queue.add(Conditional(entry))
+    try:
+        queue = set()
+        for entry in (module.params['waitfor'] or list()):
+            queue.add(Conditional(entry))
+    except AttributeError, exc:
+        module.fail_json(msg=exc.message)
 
     result = dict(changed=False, result=list())
 
