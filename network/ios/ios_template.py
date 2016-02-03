@@ -106,22 +106,6 @@ EXAMPLES = """
     config: current_config.txt
 
 
-# The example below shows how to use ignore_missing.  In the example,
-# the device running config is already configured with 'no shutdown' but
-# the value does not show up in the running-config as it is the default.  The
-# ignore_missing argument will not cause the task to try to reconfigure the
-# same command since the source value is ignored.
-
-vars:
-  candidate_config:
-    interface Ethernet1
-       no shutdown
-tasks:
-  - name: configure interface administrative state
-    net_config:
-      src: candidate_config.txt
-      ignore_missing: yes
-
 """
 
 RETURN = """
