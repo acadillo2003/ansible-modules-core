@@ -29,7 +29,7 @@ description:
     transports.
 extends_documentation_fragment: eos
 options:
-  commands:
+  lines:
     description:
       - The ordered set of commands that should be configured in the
         section.  The commands must be the exact same commands as found
@@ -108,11 +108,11 @@ options:
 
 EXAMPLES = """
 - eos_config:
-    commands: ['hostname {{ inventory_hostname }}']
+    lines: ['hostname {{ inventory_hostname }}']
     force: yes
 
 - eos_config:
-    commands:
+    lines:
       - 10 permit ip 1.1.1.1/32 any log
       - 20 permit ip 2.2.2.2/32 any log
       - 30 permit ip 3.3.3.3/32 any log
@@ -123,7 +123,7 @@ EXAMPLES = """
     match: exact
 
 - eos_config:
-    commands:
+    lines:
       - 10 permit ip 1.1.1.1/32 any log
       - 20 permit ip 2.2.2.2/32 any log
       - 30 permit ip 3.3.3.3/32 any log
@@ -136,7 +136,7 @@ EXAMPLES = """
 
 RETURN = """
 
-commands:
+lines:
   description: The set of commands that will be pushed to the remote device
   returned: always
   type: list
@@ -159,14 +159,14 @@ def get_config(module):
     return config
 
 
-def build_candidate(commands, parents, config, strategy):
+def build_candidate(lines, parents, config, strategy):
     candidate = list()
 
     if strategy == 'strict':
-        if len(commands) != len(config):
-            candidate = list(commands)
+        if len(lines) != len(config):
+            candidate = list(lines)
         else:
-            for index, cmd in enumerate(commands):
+            for index, cmd in enumerate(lines):
                 try:
                     if cmd != config[index]:
                         candidate.append(cmd)
@@ -174,16 +174,16 @@ def build_candidate(commands, parents, config, strategy):
                     candidate.append(cmd)
 
     elif strategy == 'exact':
-        if len(commands) != len(config):
-            candidate = list(commands)
+        if len(lines) != len(config):
+            candidate = list(lines)
         else:
-            for cmd, cfg in itertools.izip(commands, config):
+            for cmd, cfg in itertools.izip(lines, config):
                 if cmd != cfg:
-                    candidate = list(commands)
+                    candidate = list(lines)
                     break
 
     else:
-        for cmd in commands:
+        for cmd in lines:
             if cmd not in config:
                 candidate.append(cmd)
 
@@ -193,7 +193,7 @@ def build_candidate(commands, parents, config, strategy):
 def main():
 
     argument_spec = dict(
-        commands=dict(required=True, type='list'),
+        lines=dict(aliases=['commands'], required=True, type='list'),
         parents=dict(type='list'),
         before=dict(type='list'),
         after=dict(type='list'),
@@ -206,7 +206,7 @@ def main():
     module = get_module(argument_spec=argument_spec,
                          supports_check_mode=True)
 
-    commands = module.params['commands']
+    lines = module.params['lines']
     parents = module.params['parents'] or list()
 
     before = module.params['before']
@@ -234,14 +234,14 @@ def main():
 
     result = dict(changed=False)
 
-    candidate = build_candidate(commands, parents, children, match)
+    candidate = build_candidate(lines, parents, children, match)
 
     if candidate:
         if replace == 'line':
             candidate[:0] = parents
         else:
             candidate = list(parents)
-            candidate.extend(commands)
+            candidate.extend(lines)
 
         if before:
             candidate[:0] = before
@@ -254,7 +254,7 @@ def main():
             result['response'] = response
         result['changed'] = True
 
-    result['commands'] = candidate
+    result['lines'] = candidate
     return module.exit_json(**result)
 
 from ansible.module_utils.basic import *
