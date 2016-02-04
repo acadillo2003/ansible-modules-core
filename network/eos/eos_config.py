@@ -132,6 +132,12 @@ EXAMPLES = """
     before: ['no ip access-list test']
     replace: block
 
+- eos_config:
+    commands: "{{lookup('file', 'datcenter1.txt'}}"
+    parents: ['ip access-list test']
+    before: ['no ip access-list test']
+    replace: block
+
 """
 
 RETURN = """
