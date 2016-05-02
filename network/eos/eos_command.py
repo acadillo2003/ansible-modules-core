@@ -130,8 +130,7 @@ def main():
         interval=dict(default=1, type='int')
     )
 
-    module = get_module(argument_spec=spec,
-                        supports_check_mode=True)
+    module = get_network_module(argument_spec=spec, supports_check_mode=True)
 
     commands = module.params['commands']
 
@@ -148,7 +147,7 @@ def main():
     result = dict(changed=False)
 
     while retries > 0:
-        response = module.execute(commands)
+        response = module.run_commands(commands)
         result['stdout'] = response
 
         for index, cmd in enumerate(commands):
@@ -173,9 +172,6 @@ def main():
 
 
 from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
-from ansible.module_utils.shell import *
-from ansible.module_utils.netcfg import *
 from ansible.module_utils.eos import *
 if __name__ == '__main__':
         main()
